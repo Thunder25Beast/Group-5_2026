@@ -132,6 +132,8 @@ export default function AnkGuruApp() {
     setFeedback(null);
     setScreen('home');
   };
+  const modeQuestions = QUESTIONS.filter((item) => item.mode === mode);
+  const activeQuestion = modeQuestions[questionIndex % modeQuestions.length] ?? QUESTIONS[0];
 
   if (screen === 'home') return <HomeScreen onChoose={chooseStudent} />;
   if (screen === 'modes') return <ModeScreen student={student} onBack={() => setScreen('home')} onChoose={chooseMode} />;
@@ -140,7 +142,7 @@ export default function AnkGuruApp() {
     <PracticeScreen
       student={student}
       mode={mode}
-      question={QUESTIONS.find((item) => item.mode === mode && item === QUESTIONS[questionIndex]) ?? QUESTIONS[questionIndex % QUESTIONS.length]}
+      question={activeQuestion}
       questionIndex={questionIndex}
       feedback={feedback}
       playing={playing}
