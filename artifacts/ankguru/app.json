@@ -16,16 +16,15 @@
     "ios": {
       "supportsTablet": false
     },
-    "android": {},
+    "android": {
+      "package": "com.thunder25beast.ankguru"
+    },
     "web": {
       "favicon": "./assets/images/icon.png"
     },
     "plugins": [
       [
-        "expo-router",
-        {
-          "origin": "https://replit.com/"
-        }
+        "expo-router"
       ],
       "expo-font",
       "expo-web-browser"
@@ -33,6 +32,11 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7beea2ea-0fa4-42ef-af6f-ab3913eddbdc"
+      }
     }
   }
 }
