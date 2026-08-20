@@ -1,0 +1,59 @@
+Role: You are an expert React Native developer using Expo.
+
+Project Context: I am building a mock MVP for an app called "AnkGuru". It is a voice-based, offline mathematics practice app for Grade 3-6 first-generation learners in rural India. The UI must be extremely simple, audio-first, with minimal text, large touch targets, and high contrast for children.
+
+Tech Stack: React Native, Expo, Expo Router (or React Navigation), and Expo AV (for mock audio recording). No real backend, no database, no authentication. Everything must be hardcoded dummy data using React state.
+
+Please build the following 4 screens with functional navigation and dummy logic:
+
+1. Profile Selection Screen (Home)
+
+UI: A simple screen asking "Who is practicing?" (in Marathi: "कोण सराव करत आहे?").
+
+Logic: Display 3 large, colorful buttons with dummy student names (e.g., Meera, Rahul, Priya).
+
+Action: Tapping a name saves the user in local state and navigates to the Level Select Screen. No passwords required.
+
+2. Level / Mode Select Screen
+
+UI: Display a welcome message for the selected student. Show 3 large cards for practice modes: "Number Familiarity", "Addition" (बेरीज), and "Subtraction" (वजाबाकी).
+
+Action: Tapping any mode navigates to the Practice Screen, passing the selected mode as a parameter.
+
+3. Practice Screen (The Core Interactive Loop)
+
+UI:
+
+A large, centered visual representation of a question (e.g., "१२ + ८ = ?").
+
+A prominent "Play Question" button (Icon of a speaker).
+
+A massive "Hold to Record Answer" button (Icon of a microphone).
+
+Logic (Mocking the AI):
+
+When "Play Question" is pressed, visually indicate audio is playing (e.g., change color for 2 seconds).
+
+When "Hold to Record" is pressed, show a recording animation/state.
+
+Upon releasing the record button, show a "Processing..." loading spinner for 1.5 seconds to mock local inference.
+
+Hardcoded Outcome: Randomly (or alternately) display a massive green "Correct! (बरोबर)" or a red "Try Again (पुन्हा प्रयत्न करा)" message on the screen.
+
+Action: A "Next Question" button appears after the feedback, which resets the screen with a new hardcoded math problem. A "Finish Session" button navigates to the Progress Summary.
+
+4. Progress Summary Screen
+
+UI: A simple congratulatory screen showing dummy stats for the session (e.g., "Questions Attempted: 5, Correct: 4").
+
+Action: A large "Back to Home" button that resets the app state and goes to the Profile Selection screen.
+
+Styling Guidelines:
+
+Use a child-friendly color palette (bright blues, greens, yellows).
+
+Use massive padding and margins. Buttons should be easily tappable by small fingers.
+
+Do not use small helper text.
+
+Make sure expo-av is configured properly so the app doesn't crash when the microphone button is pressed, even if we are just mocking the audio capture visually for now.

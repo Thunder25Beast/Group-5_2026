@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/ankguru/"
+title = "AnkGuru"
+description = "A simple voice-first offline mathematics practice app for Grade 3–6 first-generation learners in rural India, with large touch targets, Marathi guidance, and encouraging practice feedback."
+version = "1.0.0"
+id = "artifacts/ankguru"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/ankguru/" ]
+localPort = 18272
+
+[services.development]
+run = "pnpm --filter @workspace/ankguru run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ankguru", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/ankguru", "run", "serve" ]
+
+[services.env]
+PORT = "18272"
+BASE_PATH = "/ankguru/"
