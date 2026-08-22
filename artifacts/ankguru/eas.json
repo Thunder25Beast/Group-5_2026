@@ -6,15 +6,18 @@
   "build": {
     "development": {
       "node": "20.10.0",
+      "android": { "image": "latest" },
       "developmentClient": true,
       "distribution": "internal"
     },
     "preview": {
       "node": "20.10.0",
+      "android": { "image": "latest" },
       "distribution": "internal"
     },
     "production": {
       "node": "20.10.0",
+      "android": { "image": "latest" },
       "autoIncrement": true
     }
   },
