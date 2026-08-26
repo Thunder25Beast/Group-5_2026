@@ -14,23 +14,34 @@ import { StatusBar } from 'expo-status-bar';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
-import { useAppStore, InteractionMode } from '@/hooks/store';
+import { useAppStore, InteractionMode, SessionConfig } from '@/hooks/store';
 
-type Screen = 'home' | 'practice';
+// ─── Data ────────────────────────────────────────────────────────────────────
 
-const MODES = [
-  { key: 'mcq' as InteractionMode, title: 'Listen & Choose', marathi: 'ऐका आणि निवडा', color: '#F6A64A', icon: 'grid' as const },
-  { key: 'scribble' as InteractionMode, title: 'Listen & Draw', marathi: 'ऐका आणि काढा', color: '#48A995', icon: 'edit-2' as const },
-  { key: 'voice' as InteractionMode, title: 'Look & Speak', marathi: 'पहा आणि बोला', color: '#7184E6', icon: 'mic' as const },
+type AppScreen = 'config' | 'practice' | 'summary';
+
+const MODE_OPTIONS: { key: InteractionMode; label: string; marathi: string; color: string; icon: 'grid' | 'edit-2' | 'mic' }[] = [
+  { key: 'mcq',      label: 'Listen & Choose (MCQ)',    marathi: 'ऐका आणि निवडा', color: '#F6A64A', icon: 'grid' },
+  { key: 'scribble', label: 'Listen & Draw (Scribble)', marathi: 'ऐका आणि काढा', color: '#48A995', icon: 'edit-2' },
+  { key: 'voice',    label: 'Look & Speak (Voice)',     marathi: 'पहा आणि बोला',  color: '#7184E6', icon: 'mic' },
 ];
 
-const QUESTIONS = [
+const NUM_QUESTION_OPTIONS: (3 | 5 | 10)[] = [3, 5, 10];
+
+const QUESTION_POOL = [
   { id: '1', display: '१२ + ८ = ?', spoken: 'बारा अधिक आठ', options: ['२०', '१८', '२२', '१५'], correct: '२०' },
-  { id: '2', display: '१५ − ६ = ?', spoken: 'पंधरा वजा सहा', options: ['९', '८', '१०', '७'], correct: '९' },
-  { id: '3', display: '३६', spoken: 'छत्तीस', options: ['३६', '२६', '४६', '६३'], correct: '३६' },
-  { id: '4', display: '७ + ९ = ?', spoken: 'सात अधिक नऊ', options: ['१६', '१५', '१७', '१४'], correct: '१६' },
-  { id: '5', display: '१८ − ९ = ?', spoken: 'अठरा वजा नऊ', options: ['९', '८', '७', '१०'], correct: '९' },
+  { id: '2', display: '१५ − ६ = ?', spoken: 'पंधरा वजा सहा', options: ['९', '८', '१०', '७'],  correct: '९' },
+  { id: '3', display: '३६',         spoken: 'छत्तीस',          options: ['३६', '२६', '४६', '६३'], correct: '३६' },
+  { id: '4', display: '७ + ९ = ?',  spoken: 'सात अधिक नऊ',     options: ['१६', '१५', '१७', '१४'], correct: '१६' },
+  { id: '5', display: '१८ − ९ = ?', spoken: 'अठरा वजा नऊ',     options: ['९', '८', '७', '१०'],   correct: '९' },
+  { id: '6', display: '५ × ४ = ?',  spoken: 'पाच गुणिले चार',  options: ['२०', '१५', '२५', '१०'], correct: '२०' },
+  { id: '7', display: '४८ ÷ ६ = ?', spoken: 'अठ्ठेचाळीस भागिले सहा', options: ['८', '७', '९', '६'], correct: '८' },
+  { id: '8', display: '२५ + १३ = ?', spoken: 'पंचवीस अधिक तेरा', options: ['३८', '३७', '३९', '४०'], correct: '३८' },
+  { id: '9', display: '१०० − ३७ = ?', spoken: 'शंभर वजा सदतीस', options: ['६३', '६२', '६४', '७३'], correct: '६३' },
+  { id: '10', display: '९ × ९ = ?', spoken: 'नऊ गुणिले नऊ', options: ['८१', '७२', '९०', '६३'], correct: '८१' },
 ];
+
+// ─── Shell ────────────────────────────────────────────────────────────────────
 
 function BrandMark() {
   return (
@@ -71,87 +82,215 @@ function ScreenShell({
   );
 }
 
+// ─── Root Controller ──────────────────────────────────────────────────────────
+
 export default function AnkGuruApp() {
-  const [screen, setScreen] = useState<Screen>('home');
-  const [mode, setMode] = useState<InteractionMode>('mcq');
+  const { setSessionConfig, clearSessionConfig } = useAppStore();
+  const [screen, setScreen] = useState<AppScreen>('config');
+  const [activeConfig, setActiveConfig] = useState<SessionConfig | null>(null);
+
+  // Session-level score tracked here, passed to summary via state
+  const [sessionScore, setSessionScore] = useState({ correct: 0, total: 0 });
   const [questionIndex, setQuestionIndex] = useState(0);
 
-  const chooseMode = (chosen: InteractionMode) => {
-    setMode(chosen);
+  const startSession = (cfg: SessionConfig) => {
+    setSessionConfig(cfg);
+    setActiveConfig(cfg);
+    setSessionScore({ correct: 0, total: 0 });
     setQuestionIndex(0);
     setScreen('practice');
   };
 
-  const handleNext = () => {
-    setQuestionIndex((prev) => (prev + 1) % QUESTIONS.length);
+  const handleQuestionDone = (wasCorrect: boolean, isLastQuestion: boolean) => {
+    setSessionScore((prev) => ({
+      correct: prev.correct + (wasCorrect ? 1 : 0),
+      total: prev.total + 1,
+    }));
+    if (isLastQuestion) {
+      setScreen('summary');
+    } else {
+      setQuestionIndex((prev) => prev + 1);
+    }
   };
 
-  const handleBack = () => {
-    setScreen('home');
+  const handleNewSession = () => {
+    clearSessionConfig();
+    setActiveConfig(null);
+    setScreen('config');
   };
 
-  if (screen === 'home') return <HomeScreen onChoose={chooseMode} />;
+  if (screen === 'config') {
+    return <ConfigScreen onStart={startSession} />;
+  }
+
+  if (screen === 'practice' && activeConfig) {
+    const question = QUESTION_POOL[questionIndex % QUESTION_POOL.length];
+    const isLastQuestion = questionIndex + 1 === activeConfig.numQuestions;
+    return (
+      <PracticeScreen
+        mode={activeConfig.mode}
+        question={question}
+        questionNumber={questionIndex + 1}
+        totalQuestions={activeConfig.numQuestions}
+        isLastQuestion={isLastQuestion}
+        onDone={(wasCorrect) => handleQuestionDone(wasCorrect, isLastQuestion)}
+        onBack={handleNewSession}
+      />
+    );
+  }
+
   return (
-    <PracticeScreen
-      mode={mode}
-      question={QUESTIONS[questionIndex]}
-      questionIndex={questionIndex}
-      onBack={handleBack}
-      onNext={handleNext}
+    <SummaryScreen
+      score={sessionScore}
+      onNewSession={handleNewSession}
     />
   );
 }
 
-function HomeScreen({ onChoose }: { onChoose: (mode: InteractionMode) => void }) {
+// ─── Screen 1: Config ─────────────────────────────────────────────────────────
+
+function ConfigScreen({ onStart }: { onStart: (cfg: SessionConfig) => void }) {
   const insets = useSafeAreaInsets();
-  const { config } = useAppStore();
+  const [selectedMode, setSelectedMode] = useState<InteractionMode>('mcq');
+  const [selectedNum, setSelectedNum] = useState<3 | 5 | 10>(5);
+
+  const handleStart = () => {
+    onStart({ mode: selectedMode, range: '0-100', numQuestions: selectedNum });
+  };
+
   return (
     <ScreenShell>
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 120 }]} showsVerticalScrollIndicator={false}>
-        <View style={styles.welcomeBlock}>
-          <Text style={styles.kicker}>नमस्कार, {config.studentName || 'मित्रा'}!</Text>
-          <Text style={styles.heroTitle}>आज काय शिकायचे?</Text>
-          <Text style={styles.heroSubtitle}>एक सराव निवडा</Text>
+      <ScrollView
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 120 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Hero */}
+        <View style={styles.configHero}>
+          <Text style={styles.configKicker}>तयार व्हा!</Text>
+          <Text style={styles.configTitle}>सत्र सुरू करा</Text>
+          <Text style={styles.configSub}>Choose your practice settings</Text>
         </View>
-        <View style={styles.modeList}>
-          {MODES.map((item) => (
-            <Pressable key={item.key} testID={`mode-${item.key}`} onPress={() => onChoose(item.key)} style={({ pressed }) => [styles.modeCard, { borderLeftColor: item.color }, pressed && styles.cardPressed]}>
-              <View style={[styles.modeIcon, { backgroundColor: item.color }]}><Feather name={item.icon} size={30} color="#FFFFFF" /></View>
-              <View style={styles.modeCopy}><Text style={styles.modeTitle}>{item.title}</Text><Text style={styles.modeMarathi}>{item.marathi}</Text></View>
-              <Feather name="arrow-up-right" size={24} color={item.color} />
-            </Pressable>
-          ))}
+
+        {/* Mode Selection */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionLabel}>📣  Practice Mode</Text>
+          <View style={styles.modeList}>
+            {MODE_OPTIONS.map((item) => {
+              const isActive = selectedMode === item.key;
+              return (
+                <Pressable
+                  key={item.key}
+                  testID={`mode-${item.key}`}
+                  onPress={() => setSelectedMode(item.key)}
+                  style={({ pressed }) => [
+                    styles.modeRow,
+                    isActive && { borderColor: item.color, borderWidth: 2.5 },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.modeIconSmall, { backgroundColor: isActive ? item.color : '#EEF2F6' }]}>
+                    <Feather name={item.icon} size={22} color={isActive ? '#FFF' : '#8A969E'} />
+                  </View>
+                  <View style={styles.modeCopy}>
+                    <Text style={[styles.modeRowTitle, isActive && { color: item.color }]}>{item.label}</Text>
+                    <Text style={styles.modeRowMarathi}>{item.marathi}</Text>
+                  </View>
+                  {isActive && <Feather name="check-circle" size={22} color={item.color} />}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Range */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionLabel}>🔢  Number Range</Text>
+          <View style={styles.rangeChip}>
+            <Feather name="hash" size={20} color="#2477D4" />
+            <Text style={styles.rangeChipText}>0 – 100</Text>
+          </View>
+        </View>
+
+        {/* Number of Questions */}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionLabel}>❓  Number of Questions</Text>
+          <View style={styles.chipRow}>
+            {NUM_QUESTION_OPTIONS.map((n) => (
+              <Pressable
+                key={n}
+                testID={`num-${n}`}
+                onPress={() => setSelectedNum(n)}
+                style={({ pressed }) => [
+                  styles.numChip,
+                  selectedNum === n && styles.numChipActive,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.numChipText, selectedNum === n && styles.numChipTextActive]}>
+                  {n}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       </ScrollView>
+
+      {/* Sticky Start Button */}
+      <View style={[styles.startButtonWrapper, { paddingBottom: insets.bottom + 12 }]}>
+        <Pressable
+          testID="start-practice-btn"
+          onPress={handleStart}
+          style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
+        >
+          <Feather name="play" size={26} color="#FFF" style={{ marginRight: 12 }} />
+          <Text style={styles.startButtonText}>Start Practice</Text>
+        </Pressable>
+      </View>
     </ScreenShell>
   );
 }
 
+// ─── Screen 2: Practice ───────────────────────────────────────────────────────
+
 function PracticeScreen({
   mode,
   question,
-  questionIndex,
+  questionNumber,
+  totalQuestions,
+  isLastQuestion,
+  onDone,
   onBack,
-  onNext,
 }: {
   mode: InteractionMode;
-  question: typeof QUESTIONS[0];
-  questionIndex: number;
+  question: typeof QUESTION_POOL[0];
+  questionNumber: number;
+  totalQuestions: number;
+  isLastQuestion: boolean;
+  onDone: (wasCorrect: boolean) => void;
   onBack: () => void;
-  onNext: () => void;
 }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { addLog } = useAppStore();
 
   const [playing, setPlaying] = useState(false);
   const [recording, setRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [feedback, setFeedback] = useState<'correct' | 'retry' | null>(null);
+  const [feedback, setFeedback] = useState<{ isCorrect: boolean } | null>(null);
 
   const pulse = useRef(new Animated.Value(1)).current;
+  const progressAnim = useRef(new Animated.Value(0)).current;
 
-  // Reset state when question or mode changes
+  // Animate progress bar
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: questionNumber / totalQuestions,
+      duration: 400,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: false,
+    }).start();
+  }, [questionNumber, totalQuestions]);
+
+  // Reset per question
   useEffect(() => {
     setFeedback(null);
     setPlaying(false);
@@ -159,6 +298,7 @@ function PracticeScreen({
     setProcessing(false);
   }, [question, mode]);
 
+  // Mic pulse animation
   useEffect(() => {
     if (!recording) return;
     const loop = Animated.loop(Animated.sequence([
@@ -177,9 +317,7 @@ function PracticeScreen({
       setRecording(false);
       handleCheckAnswer(true);
     },
-    onPanResponderTerminate: () => {
-      setRecording(false);
-    },
+    onPanResponderTerminate: () => { setRecording(false); },
   }), [recording]);
 
   const handlePlay = () => {
@@ -190,35 +328,46 @@ function PracticeScreen({
   const handleCheckAnswer = (isCorrect: boolean) => {
     setProcessing(true);
     setTimeout(() => {
-      setFeedback(isCorrect ? 'correct' : 'retry');
+      setFeedback({ isCorrect });
       setProcessing(false);
-      addLog({
-        questionDisplay: question.display,
-        mode,
-        isCorrect,
-      });
-      if (isCorrect) {
-        setTimeout(() => {
-          onNext();
-        }, 1500);
-      }
-    }, 1000);
+    }, 800);
   };
 
-  const modeData = MODES.find((m) => m.key === mode);
+  const modeData = MODE_OPTIONS.find((m) => m.key === mode)!;
+  const progressWidth = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
 
   return (
     <ScreenShell showBack onBack={onBack}>
-      <ScrollView contentContainerStyle={[styles.practiceContent, { paddingBottom: insets.bottom + 120 }]} showsVerticalScrollIndicator={false}>
+      {/* Progress Indicator */}
+      <View style={styles.progressWrapper}>
+        <View style={styles.progressTrack}>
+          <Animated.View style={[styles.progressFill, { width: progressWidth, backgroundColor: modeData.color }]} />
+        </View>
+        <Text style={styles.progressLabel}>
+          Question <Text style={[styles.progressBold, { color: modeData.color }]}>{questionNumber}</Text> of <Text style={styles.progressBold}>{totalQuestions}</Text>
+        </Text>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={[styles.practiceContent, { paddingBottom: insets.bottom + 30 }]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.practiceMeta}>
-          <Text style={styles.practiceMode}>{modeData?.marathi}</Text>
-          <Text style={styles.questionCount}>प्रश्न {questionIndex + 1}</Text>
+          <Text style={[styles.practiceMode, { color: modeData.color }]}>{modeData.marathi}</Text>
         </View>
 
         {mode !== 'voice' && (
-          <Pressable onPress={handlePlay} style={({ pressed }) => [styles.playButton, playing && styles.playingButton, pressed && styles.pressed]}>
+          <Pressable
+            onPress={handlePlay}
+            style={({ pressed }) => [styles.playButton, playing && styles.playingButton, pressed && styles.pressed]}
+          >
             <Feather name={playing ? 'volume-2' : 'play'} size={22} color={playing ? '#FFFFFF' : colors.primary} />
-            <Text style={[styles.playText, playing && styles.playTextActive]}>{playing ? 'ऐकू येत आहे...' : 'प्रश्न ऐका'}</Text>
+            <Text style={[styles.playText, playing && styles.playTextActive]}>
+              {playing ? 'ऐकू येत आहे...' : 'प्रश्न ऐका'}
+            </Text>
           </Pressable>
         )}
 
@@ -241,10 +390,15 @@ function PracticeScreen({
             {question.options.map((opt, i) => (
               <Pressable
                 key={i}
-                style={({ pressed }) => [styles.mcqOption, pressed && styles.pressed]}
+                disabled={!!feedback}
+                style={({ pressed }) => [
+                  styles.mcqOption,
+                  feedback && opt === question.correct && styles.mcqCorrect,
+                  pressed && !feedback && styles.pressed,
+                ]}
                 onPress={() => handleCheckAnswer(opt === question.correct)}
               >
-                <Text style={styles.mcqOptionText}>{opt}</Text>
+                <Text style={[styles.mcqOptionText, feedback && opt === question.correct && { color: '#FFF' }]}>{opt}</Text>
               </Pressable>
             ))}
           </View>
@@ -256,41 +410,143 @@ function PracticeScreen({
               <Feather name="edit-3" size={40} color="#DDE7EE" />
               <Text style={styles.canvasText}>येथे काढा</Text>
             </View>
-            <Pressable onPress={() => handleCheckAnswer(true)} style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}>
-              <Text style={styles.submitText}>तपासा</Text>
-            </Pressable>
+            {!feedback && (
+              <Pressable
+                onPress={() => handleCheckAnswer(true)}
+                style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.submitText}>तपासा</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
         {mode === 'voice' && (
           <View style={styles.recordArea}>
-            <Text style={styles.recordLabel}>{processing ? 'तपासत आहे...' : recording ? 'बोला... ऐकत आहे!' : 'उत्तर बोलण्यासाठी दाबा'}</Text>
+            <Text style={styles.recordLabel}>
+              {processing ? 'तपासत आहे...' : recording ? 'बोला... ऐकत आहे!' : 'उत्तर बोलण्यासाठी दाबा'}
+            </Text>
             <Animated.View style={{ transform: [{ scale: pulse }] }} {...responder.panHandlers}>
               <View style={[styles.recordButton, recording && styles.recordingButton, processing && styles.processingButton]}>
-                {processing ? <ActivityIndicator size="large" color="#FFFFFF" /> : <Feather name={recording ? 'radio' : 'mic'} size={42} color="#FFFFFF" />}
+                {processing
+                  ? <ActivityIndicator size="large" color="#FFFFFF" />
+                  : <Feather name={recording ? 'radio' : 'mic'} size={42} color="#FFFFFF" />}
               </View>
             </Animated.View>
             {!processing && <Text style={styles.holdHint}>दाबून ठेवा • सोडल्यावर उत्तर तपासले जाईल</Text>}
           </View>
         )}
 
+        {/* Feedback + Next/Finish */}
         {feedback && (
-          <View style={[styles.feedback, feedback === 'correct' ? styles.correctFeedback : styles.retryFeedback]}>
-            <Feather name={feedback === 'correct' ? 'check-circle' : 'refresh-cw'} size={30} color="#FFFFFF" />
-            <View>
-              <Text style={styles.feedbackTitle}>{feedback === 'correct' ? 'बरोबर!' : 'पुन्हा प्रयत्न करा'}</Text>
-              <Text style={styles.feedbackSub}>{feedback === 'correct' ? 'पुढचा प्रश्न येत आहे...' : 'तुम्ही हे करू शकता!'}</Text>
+          <View style={[styles.feedback, feedback.isCorrect ? styles.correctFeedback : styles.retryFeedback]}>
+            <Feather name={feedback.isCorrect ? 'check-circle' : 'x-circle'} size={30} color="#FFFFFF" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.feedbackTitle}>{feedback.isCorrect ? 'बरोबर! 🎉' : 'चुकले!'}</Text>
+              <Text style={styles.feedbackSub}>{feedback.isCorrect ? 'छान काम!' : `बरोबर उत्तर: ${question.correct}`}</Text>
             </View>
           </View>
         )}
 
+        {feedback && (
+          <Pressable
+            testID={isLastQuestion ? 'finish-session-btn' : 'next-question-btn'}
+            onPress={() => onDone(feedback.isCorrect)}
+            style={({ pressed }) => [
+              styles.nextButton,
+              isLastQuestion && styles.finishButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.nextButtonText}>
+              {isLastQuestion ? '🏁  Finish Session' : 'Next Question  →'}
+            </Text>
+          </Pressable>
+        )}
       </ScrollView>
     </ScreenShell>
   );
 }
 
+// ─── Screen 3: Summary ────────────────────────────────────────────────────────
+
+function SummaryScreen({
+  score,
+  onNewSession,
+}: {
+  score: { correct: number; total: number };
+  onNewSession: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const pct = score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0;
+
+  const emoji = pct === 100 ? '🌟' : pct >= 60 ? '😊' : '💪';
+  const message = pct === 100
+    ? 'Perfect Score! शाबास!'
+    : pct >= 60
+    ? 'Great Job! छान काम!'
+    : 'Keep Going! प्रयत्न करत राहा!';
+
+  const scaleAnim = useRef(new Animated.Value(0.7)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, friction: 5, tension: 80 }),
+      Animated.timing(opacityAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  return (
+    <View style={[styles.root, { backgroundColor: '#F0F9FF' }]}>
+      <StatusBar style="dark" />
+      <View style={[styles.summaryContainer, { paddingTop: insets.top + 30, paddingBottom: insets.bottom + 20 }]}>
+        <Animated.View style={[styles.summaryCard, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
+          <Text style={styles.summaryEmoji}>{emoji}</Text>
+          <Text style={styles.summaryTitle}>Session Complete!</Text>
+          <Text style={styles.summaryMarathi}>सत्र पूर्ण!</Text>
+          <Text style={styles.summaryMessage}>{message}</Text>
+
+          <View style={styles.statRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>{score.total}</Text>
+              <Text style={styles.statLabel}>Questions</Text>
+            </View>
+            <View style={[styles.statBox, { borderLeftWidth: 1, borderLeftColor: '#DDE7EE' }]}>
+              <Text style={[styles.statNumber, { color: '#48A995' }]}>{score.correct}</Text>
+              <Text style={styles.statLabel}>Correct ✅</Text>
+            </View>
+            <View style={[styles.statBox, { borderLeftWidth: 1, borderLeftColor: '#DDE7EE' }]}>
+              <Text style={[styles.statNumber, { color: '#E95757' }]}>{score.total - score.correct}</Text>
+              <Text style={styles.statLabel}>Incorrect ❌</Text>
+            </View>
+          </View>
+
+          <View style={styles.scoreBarTrack}>
+            <View style={[styles.scoreBarFill, { width: `${pct}%` }]} />
+          </View>
+          <Text style={styles.scorePercent}>{pct}% accuracy</Text>
+        </Animated.View>
+
+        <Pressable
+          testID="new-session-btn"
+          onPress={onNewSession}
+          style={({ pressed }) => [styles.newSessionButton, pressed && styles.pressed]}
+        >
+          <Feather name="refresh-cw" size={24} color="#FFF" style={{ marginRight: 10 }} />
+          <Text style={styles.newSessionText}>Start New Session</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
+
+  // Shell
   topBar: { minHeight: 82, paddingHorizontal: 22, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   brandRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
   brandIcon: { width: 38, height: 38, borderRadius: 13, backgroundColor: '#F6A64A', alignItems: 'center', justifyContent: 'center' },
@@ -298,47 +554,104 @@ const styles = StyleSheet.create({
   soundDot: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#E7F5FF', alignItems: 'center', justifyContent: 'center' },
   iconPlaceholder: { width: 42 },
   iconButton: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E7F5FF' },
-  scrollContent: { paddingHorizontal: 22, paddingTop: 30, flexGrow: 1 },
-  welcomeBlock: { alignItems: 'center', marginBottom: 20 },
-  kicker: { fontSize: 18, color: '#E58A2B', fontWeight: '700', marginBottom: 10 },
-  heroTitle: { fontSize: 30, lineHeight: 38, color: '#17324D', fontWeight: '800', textAlign: 'center' },
-  heroSubtitle: { fontSize: 17, color: '#5C6B76', marginTop: 6 },
-  modeList: { gap: 16, marginTop: 10 },
-  modeCard: { backgroundColor: '#FFFFFF', minHeight: 105, borderRadius: 22, borderLeftWidth: 7, padding: 16, flexDirection: 'row', alignItems: 'center', shadowColor: '#17324D', shadowOpacity: 0.07, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
-  cardPressed: { transform: [{ scale: 0.98 }], opacity: 0.9 },
-  modeIcon: { width: 58, height: 58, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
-  modeCopy: { flex: 1, marginLeft: 15 },
-  modeTitle: { color: '#17324D', fontSize: 19, fontWeight: '800' },
-  modeMarathi: { color: '#6D7C87', fontSize: 16, marginTop: 5 },
-  practiceContent: { paddingHorizontal: 22, paddingTop: 20, flexGrow: 1 },
-  practiceMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  practiceMode: { color: '#E58A2B', fontSize: 16, fontWeight: '800' },
-  questionCount: { color: '#7A8994', fontSize: 14, fontWeight: '700' },
-  questionCard: { backgroundColor: '#FFFFFF', minHeight: 160, borderRadius: 28, alignItems: 'center', justifyContent: 'center', shadowColor: '#17324D', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3, marginBottom: 20 },
+  scrollContent: { paddingHorizontal: 22, paddingTop: 16, flexGrow: 1 },
+  pressed: { opacity: 0.78, transform: [{ scale: 0.97 }] },
+
+  // Config Screen
+  configHero: { alignItems: 'center', marginBottom: 28, marginTop: 8 },
+  configKicker: { fontSize: 15, color: '#E58A2B', fontWeight: '800', letterSpacing: 1 },
+  configTitle: { fontSize: 34, color: '#17324D', fontWeight: '800', marginTop: 6 },
+  configSub: { fontSize: 16, color: '#7A8994', marginTop: 5 },
+
+  sectionCard: { backgroundColor: '#FFFFFF', borderRadius: 22, padding: 20, marginBottom: 18, shadowColor: '#17324D', shadowOpacity: 0.07, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  sectionLabel: { fontSize: 16, fontWeight: '800', color: '#17324D', marginBottom: 14 },
+
+  modeList: { gap: 12 },
+  modeRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 16, padding: 14, borderWidth: 2, borderColor: 'transparent' },
+  modeIconSmall: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 13 },
+  modeCopy: { flex: 1 },
+  modeRowTitle: { fontSize: 16, fontWeight: '800', color: '#17324D' },
+  modeRowMarathi: { fontSize: 13, color: '#8A969E', marginTop: 2 },
+
+  rangeChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E7F5FF', borderRadius: 14, padding: 14, gap: 10 },
+  rangeChipText: { fontSize: 20, fontWeight: '800', color: '#2477D4' },
+
+  chipRow: { flexDirection: 'row', gap: 12 },
+  numChip: { flex: 1, height: 64, borderRadius: 18, backgroundColor: '#F4F7FA', alignItems: 'center', justifyContent: 'center' },
+  numChipActive: { backgroundColor: '#17324D' },
+  numChipText: { fontSize: 26, fontWeight: '800', color: '#7A8994' },
+  numChipTextActive: { color: '#FFFFFF' },
+
+  startButtonWrapper: { paddingHorizontal: 22, paddingTop: 12, backgroundColor: 'transparent' },
+  startButton: { height: 70, borderRadius: 22, backgroundColor: '#F6A64A', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', shadowColor: '#F6A64A', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  startButtonText: { fontSize: 22, fontWeight: '800', color: '#FFFFFF' },
+
+  // Progress
+  progressWrapper: { paddingHorizontal: 22, paddingBottom: 12, paddingTop: 4 },
+  progressTrack: { height: 8, backgroundColor: '#EEF2F6', borderRadius: 99, overflow: 'hidden', marginBottom: 8 },
+  progressFill: { height: '100%', borderRadius: 99 },
+  progressLabel: { fontSize: 14, color: '#7A8994', fontWeight: '600', textAlign: 'center' },
+  progressBold: { fontWeight: '800', color: '#17324D' },
+
+  // Practice Screen
+  practiceContent: { paddingHorizontal: 22, paddingTop: 8, flexGrow: 1 },
+  practiceMeta: { marginBottom: 16, alignItems: 'center' },
+  practiceMode: { fontSize: 17, fontWeight: '800' },
+
+  questionCard: { backgroundColor: '#FFFFFF', minHeight: 160, borderRadius: 28, alignItems: 'center', justifyContent: 'center', shadowColor: '#17324D', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 3, marginBottom: 20, padding: 20 },
   questionLabel: { color: '#7A8994', fontSize: 15, fontWeight: '700', marginBottom: 8 },
   questionText: { color: '#17324D', fontSize: 46, fontWeight: '800', letterSpacing: 1 },
+
   playButton: { alignSelf: 'center', marginBottom: 20, paddingHorizontal: 22, minHeight: 50, borderRadius: 18, borderWidth: 2, borderColor: '#2477D4', flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center' },
   playingButton: { backgroundColor: '#2477D4' },
   playText: { color: '#2477D4', fontSize: 17, fontWeight: '800' },
   playTextActive: { color: '#FFFFFF' },
+
   mcqGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 15 },
   mcqOption: { width: '47%', backgroundColor: '#FFFFFF', height: 100, borderRadius: 20, alignItems: 'center', justifyContent: 'center', shadowColor: '#17324D', shadowOpacity: 0.06, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
+  mcqCorrect: { backgroundColor: '#48A995' },
   mcqOptionText: { fontSize: 32, fontWeight: '800', color: '#17324D' },
+
   scribbleArea: { marginTop: 10 },
   canvasPlaceholder: { width: '100%', height: 200, backgroundColor: '#FFFFFF', borderRadius: 24, borderWidth: 2, borderColor: '#DDE7EE', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', marginBottom: 20 },
   canvasText: { color: '#A1ADB4', fontSize: 18, fontWeight: '700', marginTop: 10 },
-  submitButton: { width: '100%', height: 55, backgroundColor: '#48A995', borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  submitButton: { width: '100%', height: 60, backgroundColor: '#48A995', borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   submitText: { color: '#FFFFFF', fontSize: 18, fontWeight: '800' },
+
   recordArea: { alignItems: 'center', marginTop: 22 },
   recordLabel: { color: '#17324D', fontSize: 18, fontWeight: '800', marginBottom: 13 },
   recordButton: { width: 112, height: 112, borderRadius: 56, backgroundColor: '#E95757', alignItems: 'center', justifyContent: 'center', shadowColor: '#E95757', shadowOpacity: 0.3, shadowRadius: 16, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
   recordingButton: { backgroundColor: '#C73C4E' },
   processingButton: { backgroundColor: '#7184E6' },
   holdHint: { color: '#8A969E', fontSize: 12, marginTop: 13 },
-  feedback: { marginTop: 22, minHeight: 78, borderRadius: 21, padding: 15, flexDirection: 'row', alignItems: 'center', gap: 13 },
+
+  feedback: { marginTop: 20, minHeight: 78, borderRadius: 21, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 13 },
   correctFeedback: { backgroundColor: '#48A995' },
   retryFeedback: { backgroundColor: '#E95757' },
-  feedbackTitle: { color: '#FFFFFF', fontSize: 23, fontWeight: '800' },
+  feedbackTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
   feedbackSub: { color: '#FFFFFF', opacity: 0.9, fontSize: 14, marginTop: 2 },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+
+  nextButton: { marginTop: 16, height: 64, borderRadius: 20, backgroundColor: '#2477D4', alignItems: 'center', justifyContent: 'center' },
+  finishButton: { backgroundColor: '#F6A64A' },
+  nextButtonText: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
+
+  // Summary Screen
+  summaryContainer: { flex: 1, paddingHorizontal: 22, alignItems: 'center', justifyContent: 'center' },
+  summaryCard: { width: '100%', backgroundColor: '#FFFFFF', borderRadius: 32, padding: 28, alignItems: 'center', shadowColor: '#17324D', shadowOpacity: 0.1, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 8, marginBottom: 28 },
+  summaryEmoji: { fontSize: 72, marginBottom: 10 },
+  summaryTitle: { fontSize: 32, fontWeight: '800', color: '#17324D' },
+  summaryMarathi: { fontSize: 20, fontWeight: '700', color: '#E58A2B', marginTop: 4 },
+  summaryMessage: { fontSize: 17, color: '#5C6B76', marginTop: 8, marginBottom: 22, textAlign: 'center' },
+
+  statRow: { flexDirection: 'row', width: '100%', backgroundColor: '#F8FAFC', borderRadius: 18, overflow: 'hidden', marginBottom: 20 },
+  statBox: { flex: 1, alignItems: 'center', paddingVertical: 16 },
+  statNumber: { fontSize: 32, fontWeight: '800', color: '#17324D' },
+  statLabel: { fontSize: 12, fontWeight: '700', color: '#8A969E', marginTop: 3 },
+
+  scoreBarTrack: { width: '100%', height: 10, backgroundColor: '#EEF2F6', borderRadius: 99, overflow: 'hidden', marginBottom: 8 },
+  scoreBarFill: { height: '100%', backgroundColor: '#48A995', borderRadius: 99 },
+  scorePercent: { fontSize: 15, fontWeight: '700', color: '#7A8994' },
+
+  newSessionButton: { width: '100%', height: 70, borderRadius: 22, backgroundColor: '#F6A64A', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', shadowColor: '#F6A64A', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  newSessionText: { fontSize: 22, fontWeight: '800', color: '#FFFFFF' },
 });

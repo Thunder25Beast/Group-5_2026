@@ -2,57 +2,33 @@ import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 export type InteractionMode = 'mcq' | 'scribble' | 'voice';
 
-export interface LogEntry {
-  id: string;
-  questionDisplay: string;
+export interface SessionConfig {
   mode: InteractionMode;
-  isCorrect: boolean;
-  timestamp: number;
-}
-
-export interface AppConfig {
-  studentName: string;
-  difficulty: 'easy' | 'medium' | 'hard';
+  range: '0-100';
+  numQuestions: 3 | 5 | 10;
 }
 
 interface AppState {
-  logs: LogEntry[];
-  config: AppConfig;
-  addLog: (log: Omit<LogEntry, 'id' | 'timestamp'>) => void;
-  clearLogs: () => void;
-  updateConfig: (config: Partial<AppConfig>) => void;
+  sessionConfig: SessionConfig | null;
+  setSessionConfig: (config: SessionConfig) => void;
+  clearSessionConfig: () => void;
 }
 
 const StoreContext = createContext<AppState | undefined>(undefined);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [config, setConfig] = useState<AppConfig>({
-    studentName: 'Student',
-    difficulty: 'easy',
-  });
+  const [sessionConfig, setSessionConfigState] = useState<SessionConfig | null>(null);
 
-  const addLog = (log: Omit<LogEntry, 'id' | 'timestamp'>) => {
-    setLogs((prev) => [
-      ...prev,
-      {
-        ...log,
-        id: Math.random().toString(36).substring(7),
-        timestamp: Date.now(),
-      },
-    ]);
+  const setSessionConfig = (config: SessionConfig) => {
+    setSessionConfigState(config);
   };
 
-  const clearLogs = () => {
-    setLogs([]);
-  };
-
-  const updateConfig = (newConfig: Partial<AppConfig>) => {
-    setConfig((prev) => ({ ...prev, ...newConfig }));
+  const clearSessionConfig = () => {
+    setSessionConfigState(null);
   };
 
   return (
-    <StoreContext.Provider value={{ logs, config, addLog, clearLogs, updateConfig }}>
+    <StoreContext.Provider value={{ sessionConfig, setSessionConfig, clearSessionConfig }}>
       {children}
     </StoreContext.Provider>
   );
