@@ -4,8 +4,8 @@ export type InteractionMode = 'mcq' | 'scribble' | 'voice';
 
 export interface SessionConfig {
   mode: InteractionMode;
-  range: '0-100';
-  numQuestions: 3 | 5 | 10;
+  range: string;       // e.g. '0-100', '0-200'
+  numQuestions: number; // any positive integer
 }
 
 interface AppState {

@@ -3,11 +3,14 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  KeyboardAvoidingView,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -26,7 +29,8 @@ const MODE_OPTIONS: { key: InteractionMode; label: string; marathi: string; colo
   { key: 'voice',    label: 'Look & Speak (Voice)',     marathi: 'पहा आणि बोला',  color: '#7184E6', icon: 'mic' },
 ];
 
-const NUM_QUESTION_OPTIONS: (3 | 5 | 10)[] = [3, 5, 10];
+const RANGE_PRESETS = ['0-10', '0-20', '0-50', '0-100'] as const;
+const NUM_QUESTION_PRESETS = [3, 5, 10, 20] as const;
 
 const QUESTION_POOL = [
   { id: '1', display: '१२ + ८ = ?', spoken: 'बारा अधिक आठ', options: ['२०', '१८', '२२', '१५'], correct: '२०' },
@@ -152,100 +156,181 @@ export default function AnkGuruApp() {
 function ConfigScreen({ onStart }: { onStart: (cfg: SessionConfig) => void }) {
   const insets = useSafeAreaInsets();
   const [selectedMode, setSelectedMode] = useState<InteractionMode>('mcq');
-  const [selectedNum, setSelectedNum] = useState<3 | 5 | 10>(5);
+
+  // Range state: preset string OR null when custom is active
+  const [selectedRange, setSelectedRange] = useState<string>('0-100');
+  const [customRangeMax, setCustomRangeMax] = useState('');
+  const [rangeIsCustom, setRangeIsCustom] = useState(false);
+
+  // Questions state: preset number OR 0 when custom is active
+  const [selectedNum, setSelectedNum] = useState<number>(5);
+  const [customNum, setCustomNum] = useState('');
+  const [numIsCustom, setNumIsCustom] = useState(false);
 
   const handleStart = () => {
-    onStart({ mode: selectedMode, range: '0-100', numQuestions: selectedNum });
+    const range = rangeIsCustom
+      ? `0-${customRangeMax || '100'}`
+      : selectedRange;
+    const numQuestions = numIsCustom
+      ? Math.max(1, Math.min(50, parseInt(customNum || '5', 10) || 5))
+      : selectedNum;
+    onStart({ mode: selectedMode, range, numQuestions });
   };
 
   return (
     <ScreenShell>
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 120 }]}
-        showsVerticalScrollIndicator={false}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        {/* Hero */}
-        <View style={styles.configHero}>
-          <Text style={styles.configKicker}>तयार व्हा!</Text>
-          <Text style={styles.configTitle}>सत्र सुरू करा</Text>
-          <Text style={styles.configSub}>Choose your practice settings</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Hero */}
+          <View style={styles.configHero}>
+            <Text style={styles.configKicker}>तयार व्हा!</Text>
+            <Text style={styles.configTitle}>सत्र सुरू करा</Text>
+            <Text style={styles.configSub}>Choose your practice settings</Text>
+          </View>
 
-        {/* Mode Selection */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionLabel}>📣  Practice Mode</Text>
-          <View style={styles.modeList}>
-            {MODE_OPTIONS.map((item) => {
-              const isActive = selectedMode === item.key;
-              return (
+          {/* Mode Selection */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>📣  Practice Mode</Text>
+            <View style={styles.modeList}>
+              {MODE_OPTIONS.map((item) => {
+                const isActive = selectedMode === item.key;
+                return (
+                  <Pressable
+                    key={item.key}
+                    testID={`mode-${item.key}`}
+                    onPress={() => setSelectedMode(item.key)}
+                    style={({ pressed }) => [
+                      styles.modeRow,
+                      isActive && { borderColor: item.color, borderWidth: 2.5 },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={[styles.modeIconSmall, { backgroundColor: isActive ? item.color : '#EEF2F6' }]}>
+                      <Feather name={item.icon} size={22} color={isActive ? '#FFF' : '#8A969E'} />
+                    </View>
+                    <View style={styles.modeCopy}>
+                      <Text style={[styles.modeRowTitle, isActive && { color: item.color }]}>{item.label}</Text>
+                      <Text style={styles.modeRowMarathi}>{item.marathi}</Text>
+                    </View>
+                    {isActive && <Feather name="check-circle" size={22} color={item.color} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Number Range */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>🔢  Number Range</Text>
+            <View style={styles.chipRow}>
+              {RANGE_PRESETS.map((r) => (
                 <Pressable
-                  key={item.key}
-                  testID={`mode-${item.key}`}
-                  onPress={() => setSelectedMode(item.key)}
+                  key={r}
+                  onPress={() => { setSelectedRange(r); setRangeIsCustom(false); }}
                   style={({ pressed }) => [
-                    styles.modeRow,
-                    isActive && { borderColor: item.color, borderWidth: 2.5 },
+                    styles.smallChip,
+                    !rangeIsCustom && selectedRange === r && styles.smallChipActive,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <View style={[styles.modeIconSmall, { backgroundColor: isActive ? item.color : '#EEF2F6' }]}>
-                    <Feather name={item.icon} size={22} color={isActive ? '#FFF' : '#8A969E'} />
-                  </View>
-                  <View style={styles.modeCopy}>
-                    <Text style={[styles.modeRowTitle, isActive && { color: item.color }]}>{item.label}</Text>
-                    <Text style={styles.modeRowMarathi}>{item.marathi}</Text>
-                  </View>
-                  {isActive && <Feather name="check-circle" size={22} color={item.color} />}
+                  <Text style={[
+                    styles.smallChipText,
+                    !rangeIsCustom && selectedRange === r && styles.smallChipTextActive,
+                  ]}>{r}</Text>
                 </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Range */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionLabel}>🔢  Number Range</Text>
-          <View style={styles.rangeChip}>
-            <Feather name="hash" size={20} color="#2477D4" />
-            <Text style={styles.rangeChipText}>0 – 100</Text>
-          </View>
-        </View>
-
-        {/* Number of Questions */}
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionLabel}>❓  Number of Questions</Text>
-          <View style={styles.chipRow}>
-            {NUM_QUESTION_OPTIONS.map((n) => (
+              ))}
               <Pressable
-                key={n}
-                testID={`num-${n}`}
-                onPress={() => setSelectedNum(n)}
+                onPress={() => setRangeIsCustom(true)}
                 style={({ pressed }) => [
-                  styles.numChip,
-                  selectedNum === n && styles.numChipActive,
+                  styles.smallChip,
+                  rangeIsCustom && styles.smallChipActive,
                   pressed && styles.pressed,
                 ]}
               >
-                <Text style={[styles.numChipText, selectedNum === n && styles.numChipTextActive]}>
-                  {n}
-                </Text>
+                <Text style={[styles.smallChipText, rangeIsCustom && styles.smallChipTextActive]}>✏️</Text>
               </Pressable>
-            ))}
+            </View>
+            {rangeIsCustom && (
+              <View style={styles.customInputRow}>
+                <Text style={styles.customInputLabel}>0  —  up to</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={customRangeMax}
+                  onChangeText={setCustomRangeMax}
+                  keyboardType="number-pad"
+                  placeholder="e.g. 200"
+                  placeholderTextColor="#A1ADB4"
+                  maxLength={5}
+                />
+              </View>
+            )}
           </View>
-        </View>
-      </ScrollView>
 
-      {/* Sticky Start Button */}
-      <View style={[styles.startButtonWrapper, { paddingBottom: insets.bottom + 12 }]}>
-        <Pressable
-          testID="start-practice-btn"
-          onPress={handleStart}
-          style={({ pressed }) => [styles.startButton, pressed && styles.pressed]}
-        >
-          <Feather name="play" size={26} color="#FFF" style={{ marginRight: 12 }} />
-          <Text style={styles.startButtonText}>Start Practice</Text>
-        </Pressable>
-      </View>
+          {/* Number of Questions */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>❓  Number of Questions</Text>
+            <View style={styles.chipRow}>
+              {NUM_QUESTION_PRESETS.map((n) => (
+                <Pressable
+                  key={n}
+                  testID={`num-${n}`}
+                  onPress={() => { setSelectedNum(n); setNumIsCustom(false); }}
+                  style={({ pressed }) => [
+                    styles.numChip,
+                    !numIsCustom && selectedNum === n && styles.numChipActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.numChipText, !numIsCustom && selectedNum === n && styles.numChipTextActive]}>
+                    {n}
+                  </Text>
+                </Pressable>
+              ))}
+              <Pressable
+                onPress={() => setNumIsCustom(true)}
+                style={({ pressed }) => [
+                  styles.numChip,
+                  numIsCustom && styles.numChipActive,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.numChipText, numIsCustom && styles.numChipTextActive]}>✏️</Text>
+              </Pressable>
+            </View>
+            {numIsCustom && (
+              <View style={styles.customInputRow}>
+                <Text style={styles.customInputLabel}>Enter count  (1–50)</Text>
+                <TextInput
+                  style={styles.customInput}
+                  value={customNum}
+                  onChangeText={setCustomNum}
+                  keyboardType="number-pad"
+                  placeholder="e.g. 7"
+                  placeholderTextColor="#A1ADB4"
+                  maxLength={2}
+                />
+              </View>
+            )}
+          </View>
+
+          {/* Start Button — inside scroll so it's always visible */}
+          <Pressable
+            testID="start-practice-btn"
+            onPress={handleStart}
+            style={({ pressed }) => [styles.startButton, { marginTop: 8, marginBottom: 8 }, pressed && styles.pressed]}
+          >
+            <Feather name="play" size={26} color="#FFF" style={{ marginRight: 12 }} />
+            <Text style={styles.startButtonText}>Start Practice</Text>
+          </Pressable>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ScreenShell>
   );
 }
@@ -573,16 +658,22 @@ const styles = StyleSheet.create({
   modeRowTitle: { fontSize: 16, fontWeight: '800', color: '#17324D' },
   modeRowMarathi: { fontSize: 13, color: '#8A969E', marginTop: 2 },
 
-  rangeChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E7F5FF', borderRadius: 14, padding: 14, gap: 10 },
-  rangeChipText: { fontSize: 20, fontWeight: '800', color: '#2477D4' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 4 },
 
-  chipRow: { flexDirection: 'row', gap: 12 },
-  numChip: { flex: 1, height: 64, borderRadius: 18, backgroundColor: '#F4F7FA', alignItems: 'center', justifyContent: 'center' },
+  smallChip: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14, backgroundColor: '#F4F7FA', alignItems: 'center', justifyContent: 'center' },
+  smallChipActive: { backgroundColor: '#2477D4' },
+  smallChipText: { fontSize: 14, fontWeight: '800', color: '#7A8994' },
+  smallChipTextActive: { color: '#FFFFFF' },
+
+  numChip: { width: 60, height: 60, borderRadius: 18, backgroundColor: '#F4F7FA', alignItems: 'center', justifyContent: 'center' },
   numChipActive: { backgroundColor: '#17324D' },
-  numChipText: { fontSize: 26, fontWeight: '800', color: '#7A8994' },
+  numChipText: { fontSize: 22, fontWeight: '800', color: '#7A8994' },
   numChipTextActive: { color: '#FFFFFF' },
 
-  startButtonWrapper: { paddingHorizontal: 22, paddingTop: 12, backgroundColor: 'transparent' },
+  customInputRow: { flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 12 },
+  customInputLabel: { fontSize: 15, fontWeight: '700', color: '#5C6B76', flex: 1 },
+  customInput: { width: 110, height: 50, borderRadius: 14, backgroundColor: '#F4F7FA', borderWidth: 2, borderColor: '#2477D4', paddingHorizontal: 14, fontSize: 20, fontWeight: '800', color: '#17324D', textAlign: 'center' },
+
   startButton: { height: 70, borderRadius: 22, backgroundColor: '#F6A64A', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', shadowColor: '#F6A64A', shadowOpacity: 0.4, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
   startButtonText: { fontSize: 22, fontWeight: '800', color: '#FFFFFF' },
 
