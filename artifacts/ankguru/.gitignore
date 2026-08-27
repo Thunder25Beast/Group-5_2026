@@ -39,3 +39,6 @@ yarn-error.*
 .vercel
 
 .env
+
+# Whisper ML models (too large for Git)
+assets/models/*.bin

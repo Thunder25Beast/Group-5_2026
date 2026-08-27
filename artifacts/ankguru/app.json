@@ -17,7 +17,8 @@
       "supportsTablet": false
     },
     "android": {
-      "package": "com.thunder25beast.ankguru"
+      "package": "com.thunder25beast.ankguru",
+      "permissions": ["android.permission.RECORD_AUDIO"]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -27,7 +28,10 @@
         "expo-router"
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      ["expo-av", {
+        "microphonePermission": "Allow AnkGuru to access your microphone for voice recognition."
+      }]
     ],
     "experiments": {
       "typedRoutes": true,

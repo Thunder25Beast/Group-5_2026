@@ -1,3 +1,8 @@
 const { getDefaultConfig } = require('expo/metro-config');
 
-module.exports = getDefaultConfig(__dirname);
+const config = getDefaultConfig(__dirname);
+
+// Allow bundling .bin files (Whisper model weights)
+config.resolver.assetExts.push('bin');
+
+module.exports = config;
