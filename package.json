@@ -6,10 +6,16 @@
     "build": "npm run typecheck && npm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "npm run typecheck:libs && npm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "start": "npm run dev --workspace=@workspace/ankguru"
+    "start": "npm run dev --workspace=@workspace/ankguru",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "private": true,
-  "dependencies": {},
+  "dependencies": {
+    "expo": "~54.0.37",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
+  },
   "devDependencies": {
     "prettier": "^3.9.6",
     "typescript": "~5.9.3"
