@@ -7,7 +7,9 @@
     "dev": "npx expo start --port 8083",
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -58,6 +60,9 @@
   "dependencies": {
     "expo-av": "^16.0.8",
     "expo-file-system": "^57.0.6",
-    "whisper.rn": "^0.7.4"
+    "whisper.rn": "^0.7.4",
+    "expo": "~54.0.37",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   }
 }
