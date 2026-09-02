@@ -6,20 +6,22 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { initWhisper } from 'whisper.rn';
 import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Buffer } from 'buffer';
 
 const MATH_PROBLEM = '12 + 8 = ?';
-const MODEL_ASSET = require('../assets/models/ggml-base.bin');
+const MODEL_ASSET = require('../assets/models/ggml-small.bin');
 
-// Convert base64 string to Uint8Array
-import { Buffer } from 'buffer';
+// ---- Helpers ----
 
 function base64ToUint8Array(base64) {
   return new Uint8Array(Buffer.from(base64, 'base64'));
 }
 
-// Convert int16 PCM samples to float32 PCM (what whisper expects)
 function int16ToFloat32(int16Data) {
-  const int16View = new Int16Array(int16Data.buffer, int16Data.byteOffset, int16Data.byteLength / 2);
+  const int16View = new Int16Array(
+    int16Data.buffer, int16Data.byteOffset, int16Data.byteLength / 2
+  );
   const float32 = new Float32Array(int16View.length);
   for (let i = 0; i < int16View.length; i++) {
     float32[i] = int16View[i] / 32768.0;
@@ -27,12 +29,58 @@ function int16ToFloat32(int16Data) {
   return float32;
 }
 
+/**
+ * Save float32 PCM audio as a proper WAV file on-device.
+ * Returns the file:// URI to the saved WAV.
+ */
+async function saveWavFile(float32Array, sampleRate) {
+  const numSamples = float32Array.length;
+  const wavBuffer = Buffer.alloc(44 + numSamples * 2);
+
+  // RIFF header
+  wavBuffer.write('RIFF', 0);
+  wavBuffer.writeUInt32LE(36 + numSamples * 2, 4);
+  wavBuffer.write('WAVE', 8);
+
+  // fmt sub-chunk
+  wavBuffer.write('fmt ', 12);
+  wavBuffer.writeUInt32LE(16, 16);        // Sub-chunk1 size
+  wavBuffer.writeUInt16LE(1, 20);         // PCM format
+  wavBuffer.writeUInt16LE(1, 22);         // Mono channel
+  wavBuffer.writeUInt32LE(sampleRate, 24); // Sample rate
+  wavBuffer.writeUInt32LE(sampleRate * 2, 28); // Byte rate
+  wavBuffer.writeUInt16LE(2, 32);         // Block align
+  wavBuffer.writeUInt16LE(16, 34);        // Bits per sample
+
+  // data sub-chunk
+  wavBuffer.write('data', 36);
+  wavBuffer.writeUInt32LE(numSamples * 2, 40);
+
+  // Convert float32 -> int16 and write
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    wavBuffer.writeInt16LE(Math.round(val), 44 + i * 2);
+  }
+
+  const base64Wav = wavBuffer.toString('base64');
+  const filePath = FileSystem.cacheDirectory + 'recording_' + Date.now() + '.wav';
+  await FileSystem.writeAsStringAsync(filePath, base64Wav, {
+    encoding: 'base64',
+  });
+  return filePath;
+}
+
 async function requestMicPermission() {
   if (Platform.OS === 'android') {
     try {
-      const already = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      const already = await PermissionsAndroid.check(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+      );
       if (already) return true;
-      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+      );
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     } catch (e) {
       console.warn('[ASR] Permission check failed, assuming granted');
@@ -40,12 +88,6 @@ async function requestMicPermission() {
     }
   }
   return true;
-}
-
-async function resolveModelPath(asset) {
-  const { Asset } = await import('expo-asset');
-  const [resolved] = await Asset.loadAsync(asset);
-  return resolved.localUri || resolved.uri;
 }
 
 export default function StandaloneASR() {
@@ -60,74 +102,71 @@ export default function StandaloneASR() {
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  // Load whisper model on mount
+  // ---- Load Whisper model on mount ----
   useEffect(() => {
-    let isMounted = true;
-    async function loadModel() {
+    let cancelled = false;
+    (async () => {
       try {
-        const modelPath = await resolveModelPath(MODEL_ASSET);
+        const { Asset } = require('expo-asset');
+        const [asset] = await Asset.loadAsync(MODEL_ASSET);
+        const modelPath = asset.localUri || asset.uri;
         console.log('[ASR] Model path:', modelPath);
+
         const ctx = await initWhisper({ filePath: modelPath });
-        if (isMounted) {
+        if (!cancelled) {
           whisperCtx.current = ctx;
           setModelStatus('ready');
           console.log('[ASR] Whisper model loaded successfully');
         }
       } catch (err) {
         console.error('[ASR] Model load error:', err);
-        if (isMounted) {
+        if (!cancelled) {
           setModelStatus('error');
-          setErrorMsg(err.message);
+          setErrorMsg(err.message || 'Failed to load model.');
         }
       }
-    }
-    loadModel();
-    return () => {
-      isMounted = false;
-      if (whisperCtx.current) whisperCtx.current.release();
-    };
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  // Pulse animation when recording
+  // ---- Pulse animation while recording ----
   useEffect(() => {
     if (isRecording) {
-      Animated.loop(
+      const loop = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
         ])
-      ).start();
+      );
+      loop.start();
+      return () => loop.stop();
     } else {
-      pulseAnim.stopAnimation();
       pulseAnim.setValue(0);
     }
   }, [isRecording, pulseAnim]);
 
-  // ---- PRESS IN: Start raw PCM recording ----
+  // ---- PRESS IN: Start recording raw PCM ----
   const handlePressIn = useCallback(async () => {
-    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: true }).start();
-    if (modelStatus !== 'ready' || !whisperCtx.current || isTranscribing) return;
+    if (modelStatus !== 'ready' || isTranscribing) return;
+    Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: true }).start();
 
     try {
-      const hasMic = await requestMicPermission();
-      if (!hasMic) {
+      const hasPerm = await requestMicPermission();
+      if (!hasPerm) {
         Alert.alert('Permission Denied', 'Microphone access is required.');
         return;
       }
 
-      // Clear previous chunks
       audioChunks.current = [];
 
-      // Init the native PCM audio stream: 16kHz mono 16-bit
       LiveAudioStream.init({
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
-        audioSource: 1,
+        audioSource: 1,   // MIC (raw microphone, no processing)
         bufferSize: 16384,
       });
 
-      // Listen for raw PCM chunks (base64 encoded)
       LiveAudioStream.on('data', (base64Data) => {
         audioChunks.current.push(base64Data);
       });
@@ -143,7 +182,7 @@ export default function StandaloneASR() {
     }
   }, [modelStatus, isTranscribing, scaleAnim]);
 
-  // ---- PRESS OUT: Stop recording, convert PCM, transcribe ----
+  // ---- PRESS OUT: Stop recording, save WAV, transcribe via FILE PATH ----
   const handlePressOut = useCallback(async () => {
     Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
     if (!isRecording) return;
@@ -152,7 +191,6 @@ export default function StandaloneASR() {
       setIsRecording(false);
       setIsTranscribing(true);
 
-      // Stop the native audio stream
       LiveAudioStream.stop();
       console.log('[ASR] PCM recording stopped, chunks:', audioChunks.current.length);
 
@@ -165,11 +203,9 @@ export default function StandaloneASR() {
       // Decode all base64 chunks to Uint8Arrays
       const decoded = audioChunks.current.map(base64ToUint8Array);
 
-      // Calculate total length
+      // Merge into single buffer
       let totalLen = 0;
       for (const chunk of decoded) totalLen += chunk.length;
-
-      // Merge into single Uint8Array (raw int16 PCM)
       const merged = new Uint8Array(totalLen);
       let offset = 0;
       for (const chunk of decoded) {
@@ -177,31 +213,42 @@ export default function StandaloneASR() {
         offset += chunk.length;
       }
 
-      // Convert int16 PCM to float32 PCM (whisper expects float32)
+      // Convert int16 PCM -> float32 PCM
       const float32 = int16ToFloat32(merged);
-      console.log('[ASR] Audio data ready:', float32.length, 'float32 samples (',
-        (float32.length / 16000).toFixed(1), 'seconds)');
+      const durationSec = (float32.length / 16000).toFixed(1);
+      console.log('[ASR] Audio:', float32.length, 'samples,', durationSec, 'sec');
 
-      const rms = Math.sqrt(
-        float32.reduce((sum, x) => sum + x * x, 0) / float32.length
-      );
+      // Audio level check
+      const rms = Math.sqrt(float32.reduce((s, x) => s + x * x, 0) / float32.length);
+      console.log('[ASR] RMS:', rms.toFixed(6));
 
-      console.log('[ASR] Audio RMS:', rms.toFixed(6));
-      console.log('[ASR] Audio peak:', Math.max(...float32.map(Math.abs)).toFixed(6));
-      console.log('[ASR] First 20 samples:', Array.from(float32.slice(0, 20)));
+      if (rms < 0.005) {
+        console.warn('[ASR] Audio is essentially SILENCE (RMS < 0.005). Mic may not be working.');
+        setErrorMsg('No speech detected. Please speak louder or check microphone.');
+        setIsTranscribing(false);
+        return;
+      }
 
+      // Save the audio as a proper WAV file on-device
+      const wavPath = await saveWavFile(float32, 16000);
+      console.log('[ASR] WAV saved:', wavPath);
 
-      // Transcribe the raw float32 PCM data
-      console.log('[ASR] Using model asset ID:', MODEL_ASSET);
-      const { promise } = whisperCtx.current.transcribeData(float32.buffer, {
+      // CRITICAL FIX: Use transcribe(filePath) instead of transcribeData(buffer)
+      // transcribe() lets the native C++ code read the file directly from disk,
+      // completely bypassing the React Native JS<->Native bridge which corrupts
+      // raw ArrayBuffer data.
+      console.log('[ASR] Transcribing via file...');
+      const { promise } = whisperCtx.current.transcribe(wavPath, {
         language: 'mr',
-        initialPrompt: 'नमस्कार',
-        suppressNonSpeechTokens: true,
       });
 
       const result = await promise;
-      console.log('[ASR] Transcription result:', result);
+      console.log('[ASR] Transcription result:', JSON.stringify(result));
       setTranscription(result.result || '(no speech detected)');
+
+      // Clean up the temp WAV file
+      try { await FileSystem.deleteAsync(wavPath, { idempotent: true }); } catch (_) {}
+
     } catch (err) {
       console.error('[ASR] Transcription error:', err);
       setErrorMsg(err.message || 'Transcription failed.');
@@ -320,3 +367,5 @@ const styles = StyleSheet.create({
   outputText: { fontSize: 22, color: '#FFFFFF', lineHeight: 34 },
   outputPlaceholder: { fontSize: 16, color: '#555577', fontStyle: 'italic' },
 });
+
+
