@@ -11,8 +11,36 @@ import { Buffer } from 'buffer';
 
 const MATH_PROBLEM = '12 + 8 = ?';
 
-// SWITCHED BACK TO BASE MODEL FOR SPEED
+// THE FASTEST MODEL
 const MODEL_ASSET = require('../assets/models/ggml-base.bin');
+
+// ---- Phonetic Aliases (English Hallucinations -> Marathi) ----
+const PHONETIC_ALIASES = {
+  'bees': 'वीस',
+  'beez': 'वीस',
+  'viii': 'वीस',
+  'bye': 'पाच',
+  'punch': 'पाच',
+  'dawn': 'दोन',
+  'don': 'दोन',
+  'done': 'दोन',
+  'saha': 'सहा',
+  'sat': 'सात',
+  'aat': 'आठ',
+  'art': 'आठ',
+  'now': 'नऊ',
+  'no': 'नऊ',
+  'daha': 'दहा',
+  'these': 'तीस',
+  'piece': 'तीस',
+  'chalis': 'चाळीस',
+  'pannas': 'पन्नास',
+  'shambar': 'शंभर',
+  'chamber': 'शंभर',
+  'nikki': 'एक',
+  'kis baistai': 'एकवीस',
+  'and take charity': 'चाळीस'
+};
 
 // ---- Marathi Dictionary (1-100) ----
 const MARATHI_NUMBERS = [
@@ -50,13 +78,18 @@ function levenshteinDistance(s, t) {
 }
 
 function getBestMatch(inputStr) {
-  const cleanInput = inputStr.trim();
+  const cleanInput = inputStr.replace(/[.,!?()[]{}"'*]/g, '').trim().toLowerCase();
   if (!cleanInput) return null;
   
+  // 1. Check exact phonetic aliases first
+  if (PHONETIC_ALIASES[cleanInput]) {
+    return PHONETIC_ALIASES[cleanInput];
+  }
+
   let bestMatch = null;
   let minDistance = Infinity;
 
-  // Find the closest number in our dictionary
+  // 2. Fallback to fuzzy Levenshtein matching on the Marathi dictionary
   for (const num of MARATHI_NUMBERS) {
     const dist = levenshteinDistance(cleanInput, num);
     if (dist < minDistance) {
@@ -214,7 +247,8 @@ export default function StandaloneASR() {
         channels: 1,
         bitsPerSample: 16,
         audioSource: 1,
-        bufferSize: 16384,
+        // REDUCED BUFFER SIZE: Captures chunks immediately (4096 = ~0.25 seconds) to prevent chunks: 0 error
+        bufferSize: 4096,
       });
 
       LiveAudioStream.on('data', (base64Data) => {
@@ -246,7 +280,7 @@ export default function StandaloneASR() {
       console.log('[ASR] PCM recording stopped, chunks:', audioChunks.current.length);
 
       if (audioChunks.current.length === 0) {
-        setErrorMsg('No audio data captured.');
+        setErrorMsg('No audio data captured. Try holding the button longer.');
         setIsTranscribing(false);
         return;
       }
@@ -261,7 +295,7 @@ export default function StandaloneASR() {
         offset += chunk.length;
       }
 
-      const float32 = int16ToFloat32(merged);
+      let float32 = int16ToFloat32(merged);
       const rms = Math.sqrt(float32.reduce((s, x) => s + x * x, 0) / float32.length);
       
       if (rms < 0.005) {
@@ -270,13 +304,24 @@ export default function StandaloneASR() {
         return;
       }
 
-      const wavPath = await saveWavFile(float32, 16000);
-      console.log('[ASR] Transcribing via file...');
+      // -- AUDIO PADDING --
+      // Even with English forced, Whisper likes having at least a little context. 
+      // We inject 1.0 second of pure silence at the end to stabilize it.
+      const SAMPLE_RATE = 16000;
+      const SILENCE_SECONDS = 1.0;
+      const silenceArray = new Float32Array(SAMPLE_RATE * SILENCE_SECONDS);
+      
+      const paddedFloat32 = new Float32Array(float32.length + silenceArray.length);
+      paddedFloat32.set(float32, 0);
+      paddedFloat32.set(silenceArray, float32.length);
+      // -------------------------
+
+      const wavPath = await saveWavFile(paddedFloat32, 16000);
+      console.log('[ASR] Transcribing via file (Fast Base)...');
       
       const { promise } = whisperCtx.current.transcribe(wavPath, {
-        language: 'mr',
-        // PROMPT BIAS: Tricks Whisper into listening for numbers specifically
-        initialPrompt: 'एक दोन तीन चार पाच दहा वीस पन्नास शंभर',
+        // FORCING ENGLISH to ensure predictable phonetic hallucinations (No more weird Unicode)
+        language: 'en',
       });
 
       const result = await promise;
@@ -285,7 +330,7 @@ export default function StandaloneASR() {
       
       setRawTranscription(rawText);
 
-      // Apply fuzzy matching
+      // Apply fuzzy matching & English aliases
       const finalMatch = getBestMatch(rawText);
       if (finalMatch) {
         setTranscription(finalMatch);
@@ -315,13 +360,13 @@ export default function StandaloneASR() {
 
   const statusText =
     modelStatus === 'loading'
-      ? 'Loading Whisper model (Base)...'
+      ? 'Loading Whisper model (Base Fast)...'
       : modelStatus === 'error'
         ? 'Error: ' + errorMsg
         : isRecording
           ? 'Recording... Release to transcribe'
           : isTranscribing
-            ? 'Transcribing (Optimized)...'
+            ? 'Transcribing (Super Fast)...'
             : 'Hold the button & speak in Marathi';
 
   return (
@@ -330,7 +375,7 @@ export default function StandaloneASR() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>AnkGuru ASR</Text>
-          <Text style={styles.headerSubtitle}>Fast Optimized Recognition</Text>
+          <Text style={styles.headerSubtitle}>Ultra-Fast English Hack Mode</Text>
         </View>
 
         <View style={styles.mathCard}>
@@ -401,7 +446,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 28, fontWeight: '700', color: '#FFFFFF', letterSpacing: 1 },
   headerSubtitle: { fontSize: 13, color: '#8888AA', marginTop: 4, letterSpacing: 0.5 },
   mathCard: { width: '100%', backgroundColor: '#1A1A2E', borderRadius: 20, padding: 28, alignItems: 'center', borderWidth: 1, borderColor: '#2A2A44', marginBottom: 20 },
-  mathLabel: { fontSize: 14, color: '#7C5CFC', fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.5 },
+  mathLabel: { fontSize: 14, color: '#7C5CFC', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 8 },
   mathProblem: { fontSize: 48, fontWeight: '800', color: '#FFFFFF', letterSpacing: 2 },
   statusRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 28, minHeight: 24 },
   statusText: { fontSize: 14, color: '#8888AA' },
