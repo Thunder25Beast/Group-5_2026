@@ -10,9 +10,69 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
 
 const MATH_PROBLEM = '12 + 8 = ?';
-const MODEL_ASSET = require('../assets/models/ggml-small.bin');
 
-// ---- Helpers ----
+// SWITCHED BACK TO BASE MODEL FOR SPEED
+const MODEL_ASSET = require('../assets/models/ggml-base.bin');
+
+// ---- Marathi Dictionary (1-100) ----
+const MARATHI_NUMBERS = [
+    "एक", "दोन", "तीन", "चार", "पाच", "सहा", "सात", "आठ", "नऊ", "दहा",
+    "अकरा", "बारा", "तेरा", "चौदा", "पंधरा", "सोळा", "सतरा", "अठरा", "एकोणीस", "वीस",
+    "एकवीस", "बावीस", "तेवीस", "चोवीस", "पंचवीस", "सव्वीस", "सत्तावीस", "अठ्ठावीस", "एकोणतीस", "तीस",
+    "एकतीस", "बत्तीस", "तेहतीस", "चौतीस", "पस्तीस", "छत्तीस", "सदतीस", "अडतीस", "एकोणचाळीस", "चाळीस",
+    "एकेचाळीस", "बेचाळीस", "त्रेचाळीस", "चव्वेचाळीस", "पंचेचाळीस", "शेहेचाळीस", "सत्तेचाळीस", "अठ्ठेचाळीस", "एकोणपन्नास", "पन्नास",
+    "एकावन्न", "बावन", "त्रेपन्न", "चोपन्न", "पंचावन्न", "छप्पन्न", "सत्तावन्न", "अठ्ठावन्न", "एकोणसाठ", "साठ",
+    "एकसष्ट", "बासष्ट", "त्रेसष्ट", "चौसष्ट", "पासष्ट", "सहासष्ट", "सदुसष्ट", "अडुसष्ट", "एकोणसत्तर", "सत्तर",
+    "एकाहत्तर", "बहात्तर", "त्र्याहत्तर", "चौऱ्याहत्तर", "पंच्याहत्तर", "शहात्तर", "सत्याहत्तर", "अठ्ठ्याहत्तर", "एकोणऐंशी", "ऐंशी",
+    "एकाऐंशी", "ब्याऐंशी", "त्र्याऐंशी", "चौऱ्याऐंशी", "पंच्याऐंशी", "शहाऐंशी", "सत्याऐंशी", "अठ्ठ्याऐंशी", "एकोणनव्वद", "नव्वद",
+    "एक्याण्णव", "ब्याण्णव", "त्र्याण्णव", "चौऱ्याण्णव", "पंचाण्णव", "शहाण्णव", "सत्याण्णव", "अठ्ठ्याण्णव", "नव्व्याण्णव", "शंभर"
+];
+
+// ---- Levenshtein Distance (Fuzzy Matcher) ----
+function levenshteinDistance(s, t) {
+  if (!s.length) return t.length;
+  if (!t.length) return s.length;
+  const arr = [];
+  for (let i = 0; i <= t.length; i++) {
+    arr[i] = [i];
+    for (let j = 1; j <= s.length; j++) {
+      arr[i][j] =
+        i === 0
+          ? j
+          : Math.min(
+              arr[i - 1][j] + 1,
+              arr[i][j - 1] + 1,
+              arr[i - 1][j - 1] + (s[j - 1] === t[i - 1] ? 0 : 1)
+            );
+    }
+  }
+  return arr[t.length][s.length];
+}
+
+function getBestMatch(inputStr) {
+  const cleanInput = inputStr.trim();
+  if (!cleanInput) return null;
+  
+  let bestMatch = null;
+  let minDistance = Infinity;
+
+  // Find the closest number in our dictionary
+  for (const num of MARATHI_NUMBERS) {
+    const dist = levenshteinDistance(cleanInput, num);
+    if (dist < minDistance) {
+      minDistance = dist;
+      bestMatch = num;
+    }
+  }
+  
+  // Cutoff threshold (if distance > 4, it's probably not a number at all)
+  if (minDistance > 4) {
+      return null;
+  }
+  return bestMatch;
+}
+
+// ---- Audio Helpers ----
 
 function base64ToUint8Array(base64) {
   return new Uint8Array(Buffer.from(base64, 'base64'));
@@ -29,34 +89,24 @@ function int16ToFloat32(int16Data) {
   return float32;
 }
 
-/**
- * Save float32 PCM audio as a proper WAV file on-device.
- * Returns the file:// URI to the saved WAV.
- */
 async function saveWavFile(float32Array, sampleRate) {
   const numSamples = float32Array.length;
   const wavBuffer = Buffer.alloc(44 + numSamples * 2);
 
-  // RIFF header
   wavBuffer.write('RIFF', 0);
   wavBuffer.writeUInt32LE(36 + numSamples * 2, 4);
   wavBuffer.write('WAVE', 8);
-
-  // fmt sub-chunk
   wavBuffer.write('fmt ', 12);
-  wavBuffer.writeUInt32LE(16, 16);        // Sub-chunk1 size
-  wavBuffer.writeUInt16LE(1, 20);         // PCM format
-  wavBuffer.writeUInt16LE(1, 22);         // Mono channel
-  wavBuffer.writeUInt32LE(sampleRate, 24); // Sample rate
-  wavBuffer.writeUInt32LE(sampleRate * 2, 28); // Byte rate
-  wavBuffer.writeUInt16LE(2, 32);         // Block align
-  wavBuffer.writeUInt16LE(16, 34);        // Bits per sample
-
-  // data sub-chunk
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20);
+  wavBuffer.writeUInt16LE(1, 22);
+  wavBuffer.writeUInt32LE(sampleRate, 24);
+  wavBuffer.writeUInt32LE(sampleRate * 2, 28);
+  wavBuffer.writeUInt16LE(2, 32);
+  wavBuffer.writeUInt16LE(16, 34);
   wavBuffer.write('data', 36);
   wavBuffer.writeUInt32LE(numSamples * 2, 40);
 
-  // Convert float32 -> int16 and write
   for (let i = 0; i < numSamples; i++) {
     const s = Math.max(-1, Math.min(1, float32Array[i]));
     const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
@@ -83,7 +133,6 @@ async function requestMicPermission() {
       );
       return granted === PermissionsAndroid.RESULTS.GRANTED;
     } catch (e) {
-      console.warn('[ASR] Permission check failed, assuming granted');
       return true;
     }
   }
@@ -95,6 +144,7 @@ export default function StandaloneASR() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcription, setTranscription] = useState('');
+  const [rawTranscription, setRawTranscription] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   const whisperCtx = useRef(null);
@@ -163,7 +213,7 @@ export default function StandaloneASR() {
         sampleRate: 16000,
         channels: 1,
         bitsPerSample: 16,
-        audioSource: 1,   // MIC (raw microphone, no processing)
+        audioSource: 1,
         bufferSize: 16384,
       });
 
@@ -174,6 +224,7 @@ export default function StandaloneASR() {
       LiveAudioStream.start();
       setIsRecording(true);
       setTranscription('');
+      setRawTranscription('');
       setErrorMsg('');
       console.log('[ASR] PCM recording started');
     } catch (err) {
@@ -200,10 +251,7 @@ export default function StandaloneASR() {
         return;
       }
 
-      // Decode all base64 chunks to Uint8Arrays
       const decoded = audioChunks.current.map(base64ToUint8Array);
-
-      // Merge into single buffer
       let totalLen = 0;
       for (const chunk of decoded) totalLen += chunk.length;
       const merged = new Uint8Array(totalLen);
@@ -213,40 +261,40 @@ export default function StandaloneASR() {
         offset += chunk.length;
       }
 
-      // Convert int16 PCM -> float32 PCM
       const float32 = int16ToFloat32(merged);
-      const durationSec = (float32.length / 16000).toFixed(1);
-      console.log('[ASR] Audio:', float32.length, 'samples,', durationSec, 'sec');
-
-      // Audio level check
       const rms = Math.sqrt(float32.reduce((s, x) => s + x * x, 0) / float32.length);
-      console.log('[ASR] RMS:', rms.toFixed(6));
-
+      
       if (rms < 0.005) {
-        console.warn('[ASR] Audio is essentially SILENCE (RMS < 0.005). Mic may not be working.');
-        setErrorMsg('No speech detected. Please speak louder or check microphone.');
+        setErrorMsg('No speech detected. Please speak louder.');
         setIsTranscribing(false);
         return;
       }
 
-      // Save the audio as a proper WAV file on-device
       const wavPath = await saveWavFile(float32, 16000);
-      console.log('[ASR] WAV saved:', wavPath);
-
-      // CRITICAL FIX: Use transcribe(filePath) instead of transcribeData(buffer)
-      // transcribe() lets the native C++ code read the file directly from disk,
-      // completely bypassing the React Native JS<->Native bridge which corrupts
-      // raw ArrayBuffer data.
       console.log('[ASR] Transcribing via file...');
+      
       const { promise } = whisperCtx.current.transcribe(wavPath, {
         language: 'mr',
+        // PROMPT BIAS: Tricks Whisper into listening for numbers specifically
+        initialPrompt: 'एक दोन तीन चार पाच दहा वीस पन्नास शंभर',
       });
 
       const result = await promise;
-      console.log('[ASR] Transcription result:', JSON.stringify(result));
-      setTranscription(result.result || '(no speech detected)');
+      const rawText = result.result || '';
+      console.log('[ASR] Raw result:', rawText);
+      
+      setRawTranscription(rawText);
 
-      // Clean up the temp WAV file
+      // Apply fuzzy matching
+      const finalMatch = getBestMatch(rawText);
+      if (finalMatch) {
+        setTranscription(finalMatch);
+        console.log('[ASR] Fuzzy matched to:', finalMatch);
+      } else {
+        setTranscription('(Unrecognized: ' + rawText.trim() + ')');
+        console.log('[ASR] Could not match to 1-100 dictionary');
+      }
+
       try { await FileSystem.deleteAsync(wavPath, { idempotent: true }); } catch (_) {}
 
     } catch (err) {
@@ -267,13 +315,13 @@ export default function StandaloneASR() {
 
   const statusText =
     modelStatus === 'loading'
-      ? 'Loading Whisper model...'
+      ? 'Loading Whisper model (Base)...'
       : modelStatus === 'error'
         ? 'Error: ' + errorMsg
         : isRecording
           ? 'Recording... Release to transcribe'
           : isTranscribing
-            ? 'Transcribing...'
+            ? 'Transcribing (Optimized)...'
             : 'Hold the button & speak in Marathi';
 
   return (
@@ -282,7 +330,7 @@ export default function StandaloneASR() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>AnkGuru ASR</Text>
-          <Text style={styles.headerSubtitle}>On-Device Voice Recognition</Text>
+          <Text style={styles.headerSubtitle}>Fast Optimized Recognition</Text>
         </View>
 
         <View style={styles.mathCard}>
@@ -327,10 +375,15 @@ export default function StandaloneASR() {
         </View>
 
         <View style={styles.outputCard}>
-          <Text style={styles.outputLabel}>Transcribed Text (Marathi)</Text>
+          <Text style={styles.outputLabel}>Transcribed Number (1-100)</Text>
           <View style={styles.outputBox}>
             {transcription ? (
-              <Text style={styles.outputText}>{transcription}</Text>
+              <>
+                <Text style={styles.outputText}>{transcription}</Text>
+                {rawTranscription && transcription !== '(Unrecognized: ' + rawTranscription.trim() + ')' && (
+                   <Text style={styles.rawTextOutput}>Raw AI: {rawTranscription.trim()}</Text>
+                )}
+              </>
             ) : (
               <Text style={styles.outputPlaceholder}>Your spoken words will appear here...</Text>
             )}
@@ -364,8 +417,7 @@ const styles = StyleSheet.create({
   outputCard: { width: '100%', flex: 1, marginBottom: 24 },
   outputLabel: { fontSize: 12, color: '#7C5CFC', fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 10 },
   outputBox: { flex: 1, backgroundColor: '#1A1A2E', borderRadius: 16, padding: 20, borderWidth: 1, borderColor: '#2A2A44' },
-  outputText: { fontSize: 22, color: '#FFFFFF', lineHeight: 34 },
+  outputText: { fontSize: 32, color: '#FFFFFF', fontWeight: 'bold' },
+  rawTextOutput: { fontSize: 12, color: '#8888AA', marginTop: 8, fontStyle: 'italic' },
   outputPlaceholder: { fontSize: 16, color: '#555577', fontStyle: 'italic' },
 });
-
-
