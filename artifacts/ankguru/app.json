@@ -37,7 +37,8 @@
           "microphonePermission": "Allow AnkGuru to access your microphone for voice recognition."
         }
       ],
-      "expo-audio"
+      "expo-audio",
+
     ],
     "experiments": {
       "typedRoutes": true,

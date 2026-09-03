@@ -6,41 +6,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { initWhisper } from 'whisper.rn';
 import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
-import * as FileSystem from 'expo-file-system/legacy';
-import { Buffer } from 'buffer';
 
 const MATH_PROBLEM = '12 + 8 = ?';
-
-// THE FASTEST MODEL
-const MODEL_ASSET = require('../assets/models/ggml-small.bin');
-
-// ---- Phonetic Aliases (English Hallucinations -> Marathi) ----
-const PHONETIC_ALIASES = {
-  'bees': 'वीस',
-  'beez': 'वीस',
-  'viii': 'वीस',
-  'bye': 'पाच',
-  'punch': 'पाच',
-  'dawn': 'दोन',
-  'don': 'दोन',
-  'done': 'दोन',
-  'saha': 'सहा',
-  'sat': 'सात',
-  'aat': 'आठ',
-  'art': 'आठ',
-  'now': 'नऊ',
-  'no': 'नऊ',
-  'daha': 'दहा',
-  'these': 'तीस',
-  'piece': 'तीस',
-  'chalis': 'चाळीस',
-  'pannas': 'पन्नास',
-  'shambar': 'शंभर',
-  'chamber': 'शंभर',
-  'nikki': 'एक',
-  'kis baistai': 'एकवीस',
-  'and take charity': 'चाळीस'
-};
+const MODEL_ASSET = require('../assets/models/ggml-tiny.bin');
 
 // ---- Marathi Dictionary (1-100) ----
 const MARATHI_NUMBERS = [
@@ -56,7 +24,7 @@ const MARATHI_NUMBERS = [
     "एक्याण्णव", "ब्याण्णव", "त्र्याण्णव", "चौऱ्याण्णव", "पंचाण्णव", "शहाण्णव", "सत्याण्णव", "अठ्ठ्याण्णव", "नव्व्याण्णव", "शंभर"
 ];
 
-// ---- Levenshtein Distance (Fuzzy Matcher) ----
+// ---- Fuzzy Matcher ----
 function levenshteinDistance(s, t) {
   if (!s.length) return t.length;
   if (!t.length) return s.length;
@@ -64,57 +32,62 @@ function levenshteinDistance(s, t) {
   for (let i = 0; i <= t.length; i++) {
     arr[i] = [i];
     for (let j = 1; j <= s.length; j++) {
-      arr[i][j] =
-        i === 0
-          ? j
-          : Math.min(
-              arr[i - 1][j] + 1,
-              arr[i][j - 1] + 1,
-              arr[i - 1][j - 1] + (s[j - 1] === t[i - 1] ? 0 : 1)
-            );
+      arr[i][j] = i === 0 ? j : Math.min(
+        arr[i - 1][j] + 1,
+        arr[i][j - 1] + 1,
+        arr[i - 1][j - 1] + (s[j - 1] === t[i - 1] ? 0 : 1)
+      );
     }
   }
   return arr[t.length][s.length];
 }
 
 function getBestMatch(inputStr) {
-  const cleanInput = inputStr.replace(/[.,!?()[]{}"'*]/g, '').trim().toLowerCase();
-  if (!cleanInput) return null;
-  
-  // 1. Check exact phonetic aliases first
-  if (PHONETIC_ALIASES[cleanInput]) {
-    return PHONETIC_ALIASES[cleanInput];
+  const numberValue = parseInt(inputStr.trim(), 10);
+  if (!isNaN(numberValue) && numberValue >= 1 && numberValue <= 100) {
+    return MARATHI_NUMBERS[numberValue - 1]; 
   }
-
+  
+  const cleanInput = inputStr.replace(/[.,!?()\[\]{}"'*\-0-9A-Za-z]/g, '').trim();
+  if (!cleanInput) return null;
+  const noSpaces = cleanInput.replace(/\s+/g, '');
+  
+  const exactIdx = MARATHI_NUMBERS.indexOf(noSpaces);
+  if (exactIdx !== -1) return MARATHI_NUMBERS[exactIdx];
+  
   let bestMatch = null;
   let minDistance = Infinity;
-
-  // 2. Fallback to fuzzy Levenshtein matching on the Marathi dictionary
   for (const num of MARATHI_NUMBERS) {
-    const dist = levenshteinDistance(cleanInput, num);
-    if (dist < minDistance) {
-      minDistance = dist;
-      bestMatch = num;
+    const dist = levenshteinDistance(noSpaces, num);
+    if (dist < minDistance) { minDistance = dist; bestMatch = num; }
+  }
+  
+  const words = cleanInput.split(/\s+/);
+  for (const word of words) {
+    for (const num of MARATHI_NUMBERS) {
+      const dist = levenshteinDistance(word, num);
+      if (dist < minDistance) { minDistance = dist; bestMatch = num; }
     }
   }
   
-  // Cutoff threshold (if distance > 4, it's probably not a number at all)
-  if (minDistance > 4) {
-      return null;
-  }
+  console.log('[ASR] Best fuzzy match:', bestMatch, 'distance:', minDistance);
+  if (minDistance > 6) return null;
   return bestMatch;
 }
 
-// ---- Audio Helpers ----
-
+// Convert base64 to Uint8Array
 function base64ToUint8Array(base64) {
-  return new Uint8Array(Buffer.from(base64, 'base64'));
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 
+// Convert int16 PCM to float32
 function int16ToFloat32(int16Data) {
-  const int16View = new Int16Array(
-    int16Data.buffer, int16Data.byteOffset, int16Data.byteLength / 2
-  );
+  const int16View = new Int16Array(int16Data.buffer, int16Data.byteOffset, int16Data.byteLength / 2);
   const float32 = new Float32Array(int16View.length);
   for (let i = 0; i < int16View.length; i++) {
     float32[i] = int16View[i] / 32768.0;
@@ -122,99 +95,56 @@ function int16ToFloat32(int16Data) {
   return float32;
 }
 
-async function saveWavFile(float32Array, sampleRate) {
-  const numSamples = float32Array.length;
-  const wavBuffer = Buffer.alloc(44 + numSamples * 2);
-
-  wavBuffer.write('RIFF', 0);
-  wavBuffer.writeUInt32LE(36 + numSamples * 2, 4);
-  wavBuffer.write('WAVE', 8);
-  wavBuffer.write('fmt ', 12);
-  wavBuffer.writeUInt32LE(16, 16);
-  wavBuffer.writeUInt16LE(1, 20);
-  wavBuffer.writeUInt16LE(1, 22);
-  wavBuffer.writeUInt32LE(sampleRate, 24);
-  wavBuffer.writeUInt32LE(sampleRate * 2, 28);
-  wavBuffer.writeUInt16LE(2, 32);
-  wavBuffer.writeUInt16LE(16, 34);
-  wavBuffer.write('data', 36);
-  wavBuffer.writeUInt32LE(numSamples * 2, 40);
-
-  for (let i = 0; i < numSamples; i++) {
-    const s = Math.max(-1, Math.min(1, float32Array[i]));
-    const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    wavBuffer.writeInt16LE(Math.round(val), 44 + i * 2);
-  }
-
-  const base64Wav = wavBuffer.toString('base64');
-  const filePath = FileSystem.cacheDirectory + 'recording_' + Date.now() + '.wav';
-  await FileSystem.writeAsStringAsync(filePath, base64Wav, {
-    encoding: 'base64',
-  });
-  return filePath;
-}
-
 async function requestMicPermission() {
   if (Platform.OS === 'android') {
-    try {
-      const already = await PermissionsAndroid.check(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
-      );
-      if (already) return true;
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (e) {
-      return true;
-    }
+    const granted = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      {
+        title: 'Microphone Permission',
+        message: 'AnkGuru needs microphone access for offline voice recognition.',
+        buttonPositive: 'Allow',
+        buttonNegative: 'Deny',
+      }
+    );
+    return granted === PermissionsAndroid.RESULTS.GRANTED;
   }
   return true;
 }
 
 export default function StandaloneASR() {
-  const [modelStatus, setModelStatus] = useState('loading');
-  const [isRecording, setIsRecording] = useState(false);
+  const [isReady, setIsReady] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcription, setTranscription] = useState('');
   const [rawTranscription, setRawTranscription] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
+  
   const whisperCtx = useRef(null);
-  const audioChunks = useRef([]);
+  const pcmDataRef = useRef([]);
+  
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  // ---- Load Whisper model on mount ----
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
+    async function loadModel() {
       try {
-        const { Asset } = require('expo-asset');
-        const [asset] = await Asset.loadAsync(MODEL_ASSET);
-        const modelPath = asset.localUri || asset.uri;
-        console.log('[ASR] Model path:', modelPath);
-
-        const ctx = await initWhisper({ filePath: modelPath });
-        if (!cancelled) {
-          whisperCtx.current = ctx;
-          setModelStatus('ready');
-          console.log('[ASR] Whisper model loaded successfully');
-        }
-      } catch (err) {
-        console.error('[ASR] Model load error:', err);
-        if (!cancelled) {
-          setModelStatus('error');
-          setErrorMsg(err.message || 'Failed to load model.');
-        }
+        console.log('[ASR] Loading Tiny offline model...');
+        whisperCtx.current = await initWhisper({ filePath: MODEL_ASSET });
+        console.log('[ASR] Whisper Tiny loaded successfully');
+        setIsReady(true);
+      } catch (e) {
+        console.error('[ASR] Model load error:', e);
       }
-    })();
-    return () => { cancelled = true; };
+    }
+    loadModel();
+    return () => {
+      if (whisperCtx.current) {
+        whisperCtx.current.release();
+      }
+    };
   }, []);
 
-  // ---- Pulse animation while recording ----
   useEffect(() => {
-    if (isRecording) {
+    if (isListening) {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
@@ -226,149 +156,94 @@ export default function StandaloneASR() {
     } else {
       pulseAnim.setValue(0);
     }
-  }, [isRecording, pulseAnim]);
+  }, [isListening, pulseAnim]);
 
-  // ---- PRESS IN: Start recording raw PCM ----
   const handlePressIn = useCallback(async () => {
-    if (modelStatus !== 'ready' || isTranscribing) return;
+    if (!isReady || isListening || isTranscribing) return;
     Animated.spring(scaleAnim, { toValue: 0.88, useNativeDriver: true }).start();
 
+    const hasPermission = await requestMicPermission();
+    if (!hasPermission) return;
+
+    setTranscription('');
+    setRawTranscription('');
+    pcmDataRef.current = [];
+    setIsListening(true);
+
     try {
-      const hasPerm = await requestMicPermission();
-      if (!hasPerm) {
-        Alert.alert('Permission Denied', 'Microphone access is required.');
-        return;
-      }
-
-      audioChunks.current = [];
-
-      LiveAudioStream.init({
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        audioSource: 1,
-        // REDUCED BUFFER SIZE: Captures chunks immediately (4096 = ~0.25 seconds) to prevent chunks: 0 error
-        bufferSize: 4096,
+      LiveAudioStream.init({ sampleRate: 16000, channels: 1, bitsPerSample: 16, bufferSize: 2048 });
+      LiveAudioStream.on('data', (data) => {
+        const chunk = base64ToUint8Array(data);
+        pcmDataRef.current.push(chunk);
       });
-
-      LiveAudioStream.on('data', (base64Data) => {
-        audioChunks.current.push(base64Data);
-      });
-
       LiveAudioStream.start();
-      setIsRecording(true);
-      setTranscription('');
-      setRawTranscription('');
-      setErrorMsg('');
-      console.log('[ASR] PCM recording started');
-    } catch (err) {
-      console.error('[ASR] Recording error:', err);
-      Alert.alert('Recording Error', String(err));
+      console.log('[ASR] Offline PCM recording started');
+    } catch (e) {
+      console.error('[ASR] Stream start error:', e);
+      setIsListening(false);
     }
-  }, [modelStatus, isTranscribing, scaleAnim]);
+  }, [isReady, isListening, isTranscribing, scaleAnim]);
 
-  // ---- PRESS OUT: Stop recording, save WAV, transcribe via FILE PATH ----
   const handlePressOut = useCallback(async () => {
     Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true }).start();
-    if (!isRecording) return;
+    if (!isListening) return;
 
     try {
-      setIsRecording(false);
-      setIsTranscribing(true);
-
       LiveAudioStream.stop();
-      console.log('[ASR] PCM recording stopped, chunks:', audioChunks.current.length);
+      setIsListening(false);
+      setIsTranscribing(true);
+      console.log('[ASR] PCM recording stopped, chunks:', pcmDataRef.current.length);
 
-      if (audioChunks.current.length === 0) {
-        setErrorMsg('No audio data captured. Try holding the button longer.');
-        setIsTranscribing(false);
-        return;
-      }
-
-      const decoded = audioChunks.current.map(base64ToUint8Array);
-      let totalLen = 0;
-      for (const chunk of decoded) totalLen += chunk.length;
-      const merged = new Uint8Array(totalLen);
+      const totalLength = pcmDataRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
+      const combined = new Uint8Array(totalLength);
       let offset = 0;
-      for (const chunk of decoded) {
-        merged.set(chunk, offset);
+      for (const chunk of pcmDataRef.current) {
+        combined.set(chunk, offset);
         offset += chunk.length;
       }
-
-      let float32 = int16ToFloat32(merged);
-      const rms = Math.sqrt(float32.reduce((s, x) => s + x * x, 0) / float32.length);
+      const float32 = int16ToFloat32(combined);
       
-      if (rms < 0.005) {
-        setErrorMsg('No speech detected. Please speak louder.');
-        setIsTranscribing(false);
-        return;
-      }
-
-      // -- AUDIO PADDING --
-      // Even with English forced, Whisper likes having at least a little context. 
-      // We inject 1.0 second of pure silence at the end to stabilize it.
-      const SAMPLE_RATE = 16000;
-      const SILENCE_SECONDS = 1.0;
-      const silenceArray = new Float32Array(SAMPLE_RATE * SILENCE_SECONDS);
+      console.log('[ASR] Transcribing offline with Tiny model...');
       
-      const paddedFloat32 = new Float32Array(float32.length + silenceArray.length);
-      paddedFloat32.set(float32, 0);
-      paddedFloat32.set(silenceArray, float32.length);
-      // -------------------------
-
-      const wavPath = await saveWavFile(paddedFloat32, 16000);
-      console.log('[ASR] Transcribing via file (Small 4T)...');
-      
-      const { promise } = whisperCtx.current.transcribe(wavPath, {
-        // Marathi mode with aggressive number prompting
+      // EXPLICITLY FORCE MARATHI LANGUAGE
+      const { promise } = whisperCtx.current.transcribeData(float32.buffer, {
         language: 'mr',
-        nThreads: 4,
+        maxLen: 1, // Keep output extremely short for numbers
+        tokenTimestamps: false,
       });
 
-      const result = await promise;
-      const rawText = result.result || '';
-      console.log('[ASR] Raw result:', rawText);
+      const res = await promise;
+      const raw = res.result || '';
+      console.log('[ASR] Whisper raw result:', raw);
+      setRawTranscription(raw);
       
-      setRawTranscription(rawText);
-
-      // Apply fuzzy matching & English aliases
-      const finalMatch = getBestMatch(rawText);
-      if (finalMatch) {
-        setTranscription(finalMatch);
-        console.log('[ASR] Fuzzy matched to:', finalMatch);
+      const match = getBestMatch(raw);
+      if (match) {
+        setTranscription(match);
+        console.log('[ASR] Match found:', match);
       } else {
-        setTranscription('(Unrecognized: ' + rawText.trim() + ')');
-        console.log('[ASR] Could not match to 1-100 dictionary');
+        setTranscription(raw);
+        console.log('[ASR] No dictionary match');
       }
-
-      try { await FileSystem.deleteAsync(wavPath, { idempotent: true }); } catch (_) {}
-
-    } catch (err) {
-      console.error('[ASR] Transcription error:', err);
-      setErrorMsg(err.message || 'Transcription failed.');
+    } catch (e) {
+      console.error('[ASR] Transcribe error:', e);
     } finally {
-      audioChunks.current = [];
       setIsTranscribing(false);
     }
-  }, [isRecording, scaleAnim]);
+  }, [isListening, scaleAnim]);
 
-  const buttonDisabled = modelStatus !== 'ready' || isTranscribing;
-  const buttonScale = scaleAnim;
   const pulseOpacity = pulseAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 0.35],
   });
 
-  const statusText =
-    modelStatus === 'loading'
-      ? 'Loading Whisper model (Small + 4 Threads)...'
-      : modelStatus === 'error'
-        ? 'Error: ' + errorMsg
-        : isRecording
-          ? 'Recording... Release to transcribe'
-          : isTranscribing
-            ? 'Transcribing...'
-            : 'Hold the button & speak in Marathi';
+  const statusText = !isReady
+    ? 'Loading offline AI model...'
+    : isTranscribing
+      ? 'Transcribing locally...'
+      : isListening
+        ? 'Listening... Release to stop'
+        : 'Hold to speak (100% Offline Whisper)';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -376,7 +251,7 @@ export default function StandaloneASR() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>AnkGuru ASR</Text>
-          <Text style={styles.headerSubtitle}>Optimized Small Model</Text>
+          <Text style={styles.headerSubtitle}>True Offline Marathi AI (Tiny)</Text>
         </View>
 
         <View style={styles.mathCard}>
@@ -385,49 +260,45 @@ export default function StandaloneASR() {
         </View>
 
         <View style={styles.statusRow}>
-          {(modelStatus === 'loading' || isTranscribing) && (
-            <ActivityIndicator size='small' color='#7C5CFC' style={{ marginRight: 8 }} />
+          {(isListening || isTranscribing || !isReady) && (
+            <ActivityIndicator size='small' color='#4CAF50' style={{ marginRight: 8 }} />
           )}
-          <Text style={[
-            styles.statusText,
-            modelStatus === 'error' && styles.statusError,
-            isRecording && styles.statusRecording,
-          ]}>
+          <Text style={[styles.statusText, isListening && styles.statusRecording]}>
             {statusText}
           </Text>
         </View>
 
         <View style={styles.micContainer}>
-          {isRecording && (
+          {isListening && (
             <Animated.View style={[styles.pulseRing, { opacity: pulseOpacity, transform: [{ scale: 1.35 }] }]} />
           )}
-          <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
             <Pressable
               onPressIn={handlePressIn}
               onPressOut={handlePressOut}
-              disabled={buttonDisabled}
+              disabled={!isReady || isTranscribing}
               style={({ pressed }) => [
                 styles.micButton,
-                isRecording && styles.micButtonRecording,
-                buttonDisabled && !isRecording && styles.micButtonDisabled,
+                isListening && styles.micButtonRecording,
+                (!isReady || isTranscribing) && styles.micButtonDisabled,
               ]}
             >
               <Text style={styles.micIcon}>{String.fromCodePoint(0x1F3A4)}</Text>
               <Text style={styles.micLabel}>
-                {isRecording ? 'Recording...' : 'Hold to Record'}
+                {isListening ? 'Listening...' : isTranscribing ? 'Processing...' : 'Hold to Record'}
               </Text>
             </Pressable>
           </Animated.View>
         </View>
 
         <View style={styles.outputCard}>
-          <Text style={styles.outputLabel}>Transcribed Number (1-100)</Text>
+          <Text style={styles.outputLabel}>Transcribed Number</Text>
           <View style={styles.outputBox}>
             {transcription ? (
               <>
                 <Text style={styles.outputText}>{transcription}</Text>
-                {rawTranscription && transcription !== '(Unrecognized: ' + rawTranscription.trim() + ')' && (
-                   <Text style={styles.rawTextOutput}>Raw AI: {rawTranscription.trim()}</Text>
+                {rawTranscription && rawTranscription !== transcription && (
+                   <Text style={styles.rawTextOutput}>AI heard: {rawTranscription}</Text>
                 )}
               </>
             ) : (
@@ -451,13 +322,12 @@ const styles = StyleSheet.create({
   mathProblem: { fontSize: 48, fontWeight: '800', color: '#FFFFFF', letterSpacing: 2 },
   statusRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 28, minHeight: 24 },
   statusText: { fontSize: 14, color: '#8888AA' },
-  statusError: { color: '#FF4466' },
-  statusRecording: { color: '#FF5555', fontWeight: '600' },
+  statusRecording: { color: '#4CAF50', fontWeight: '600' },
   micContainer: { position: 'relative', alignItems: 'center', justifyContent: 'center', marginBottom: 32, width: 180, height: 180 },
-  pulseRing: { position: 'absolute', width: 180, height: 180, borderRadius: 90, backgroundColor: '#FF5555' },
+  pulseRing: { position: 'absolute', width: 180, height: 180, borderRadius: 90, backgroundColor: '#4CAF50' },
   micButton: { width: 160, height: 160, borderRadius: 80, backgroundColor: '#7C5CFC', alignItems: 'center', justifyContent: 'center', elevation: 12, shadowColor: '#7C5CFC', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16 },
-  micButtonRecording: { backgroundColor: '#FF3355', shadowColor: '#FF3355' },
-  micButtonDisabled: { backgroundColor: '#333355', shadowOpacity: 0, elevation: 0 },
+  micButtonRecording: { backgroundColor: '#4CAF50', shadowColor: '#4CAF50' },
+  micButtonDisabled: { backgroundColor: '#333344', shadowOpacity: 0 },
   micIcon: { fontSize: 52, marginBottom: 4 },
   micLabel: { fontSize: 13, fontWeight: '600', color: '#FFFFFF', letterSpacing: 0.5 },
   outputCard: { width: '100%', flex: 1, marginBottom: 24 },
@@ -467,6 +337,3 @@ const styles = StyleSheet.create({
   rawTextOutput: { fontSize: 12, color: '#8888AA', marginTop: 8, fontStyle: 'italic' },
   outputPlaceholder: { fontSize: 16, color: '#555577', fontStyle: 'italic' },
 });
-
-
-
