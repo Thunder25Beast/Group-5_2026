@@ -320,7 +320,7 @@ export default function StandaloneASR() {
       console.log('[ASR] Transcribing via file (Small 4T)...');
       
       const { promise } = whisperCtx.current.transcribe(wavPath, {
-        // FORCING ENGLISH to ensure predictable phonetic hallucinations (No more weird Unicode)
+        // Marathi mode with aggressive number prompting
         language: 'mr',
         nThreads: 4,
       });
@@ -467,4 +467,6 @@ const styles = StyleSheet.create({
   rawTextOutput: { fontSize: 12, color: '#8888AA', marginTop: 8, fontStyle: 'italic' },
   outputPlaceholder: { fontSize: 16, color: '#555577', fontStyle: 'italic' },
 });
+
+
 
