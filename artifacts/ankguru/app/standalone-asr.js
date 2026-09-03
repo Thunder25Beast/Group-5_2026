@@ -8,7 +8,7 @@ import { initWhisper } from 'whisper.rn';
 import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
 
 const MATH_PROBLEM = '12 + 8 = ?';
-const MODEL_ASSET = require('../assets/models/ggml-tiny.bin');
+const MODEL_ASSET = require('../assets/models/ggml-base.bin');
 
 // ---- Marathi Dictionary (1-100) ----
 const MARATHI_NUMBERS = [
@@ -127,9 +127,9 @@ export default function StandaloneASR() {
   useEffect(() => {
     async function loadModel() {
       try {
-        console.log('[ASR] Loading Tiny offline model...');
+        console.log('[ASR] Loading Base offline model...');
         whisperCtx.current = await initWhisper({ filePath: MODEL_ASSET });
-        console.log('[ASR] Whisper Tiny loaded successfully');
+        console.log('[ASR] Whisper Base loaded successfully');
         setIsReady(true);
       } catch (e) {
         console.error('[ASR] Model load error:', e);
@@ -202,11 +202,17 @@ export default function StandaloneASR() {
         offset += chunk.length;
       }
       const float32 = int16ToFloat32(combined);
+      // Whisper hallucinates on < 2 seconds of audio. Inject 1.5 seconds of pure silence.
+      const SILENCE_SECONDS = 1.5;
+      const silenceArray = new Float32Array(16000 * SILENCE_SECONDS);
+      const paddedFloat32 = new Float32Array(float32.length + silenceArray.length);
+      paddedFloat32.set(float32, 0);
+      paddedFloat32.set(silenceArray, float32.length);
       
-      console.log('[ASR] Transcribing offline with Tiny model...');
+      console.log('[ASR] Transcribing offline with Base model...');
       
       // EXPLICITLY FORCE MARATHI LANGUAGE
-      const { promise } = whisperCtx.current.transcribeData(float32.buffer, {
+      const { promise } = whisperCtx.current.transcribeData(paddedFloat32.buffer, {
         language: 'mr',
         maxLen: 1, // Keep output extremely short for numbers
         tokenTimestamps: false,
