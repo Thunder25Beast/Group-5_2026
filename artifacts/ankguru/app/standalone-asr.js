@@ -12,7 +12,7 @@ import { Buffer } from 'buffer';
 const MATH_PROBLEM = '12 + 8 = ?';
 
 // THE FASTEST MODEL
-const MODEL_ASSET = require('../assets/models/ggml-base.bin');
+const MODEL_ASSET = require('../assets/models/ggml-small.bin');
 
 // ---- Phonetic Aliases (English Hallucinations -> Marathi) ----
 const PHONETIC_ALIASES = {
@@ -317,11 +317,12 @@ export default function StandaloneASR() {
       // -------------------------
 
       const wavPath = await saveWavFile(paddedFloat32, 16000);
-      console.log('[ASR] Transcribing via file (Fast Base)...');
+      console.log('[ASR] Transcribing via file (Small 4T)...');
       
       const { promise } = whisperCtx.current.transcribe(wavPath, {
         // FORCING ENGLISH to ensure predictable phonetic hallucinations (No more weird Unicode)
-        language: 'en',
+        language: 'mr',
+        nThreads: 4,
       });
 
       const result = await promise;
@@ -360,13 +361,13 @@ export default function StandaloneASR() {
 
   const statusText =
     modelStatus === 'loading'
-      ? 'Loading Whisper model (Base Fast)...'
+      ? 'Loading Whisper model (Small + 4 Threads)...'
       : modelStatus === 'error'
         ? 'Error: ' + errorMsg
         : isRecording
           ? 'Recording... Release to transcribe'
           : isTranscribing
-            ? 'Transcribing (Super Fast)...'
+            ? 'Transcribing...'
             : 'Hold the button & speak in Marathi';
 
   return (
@@ -375,7 +376,7 @@ export default function StandaloneASR() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>AnkGuru ASR</Text>
-          <Text style={styles.headerSubtitle}>Ultra-Fast English Hack Mode</Text>
+          <Text style={styles.headerSubtitle}>Optimized Small Model</Text>
         </View>
 
         <View style={styles.mathCard}>
@@ -466,3 +467,4 @@ const styles = StyleSheet.create({
   rawTextOutput: { fontSize: 12, color: '#8888AA', marginTop: 8, fontStyle: 'italic' },
   outputPlaceholder: { fontSize: 16, color: '#555577', fontStyle: 'italic' },
 });
+
