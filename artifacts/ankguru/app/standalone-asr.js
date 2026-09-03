@@ -6,6 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { initWhisper } from 'whisper.rn';
 import LiveAudioStream from '@fugood/react-native-audio-pcm-stream';
+import * as FileSystem from 'expo-file-system';
+import { Buffer } from 'buffer';
 
 const MATH_PROBLEM = '12 + 8 = ?';
 const MODEL_ASSET = require('../assets/models/ggml-base.bin');
@@ -75,17 +77,12 @@ function getBestMatch(inputStr) {
   return bestMatch;
 }
 
-// Convert base64 to Uint8Array
-function base64ToUint8Array(base64) {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
+// ---- Safe Audio Decoding & File Saving ----
+function base64ToUint8ArraySafe(base64) {
+  // Use Buffer instead of atob to prevent binary corruption on React Native bridge
+  return new Uint8Array(Buffer.from(base64, 'base64'));
 }
 
-// Convert int16 PCM to float32
 function int16ToFloat32(int16Data) {
   const int16View = new Int16Array(int16Data.buffer, int16Data.byteOffset, int16Data.byteLength / 2);
   const float32 = new Float32Array(int16View.length);
@@ -93,6 +90,38 @@ function int16ToFloat32(int16Data) {
     float32[i] = int16View[i] / 32768.0;
   }
   return float32;
+}
+
+async function saveWavFile(float32Array, sampleRate) {
+  const numSamples = float32Array.length;
+  const wavBuffer = Buffer.alloc(44 + numSamples * 2);
+
+  wavBuffer.write('RIFF', 0);
+  wavBuffer.writeUInt32LE(36 + numSamples * 2, 4);
+  wavBuffer.write('WAVE', 8);
+  wavBuffer.write('fmt ', 12);
+  wavBuffer.writeUInt32LE(16, 16);
+  wavBuffer.writeUInt16LE(1, 20);
+  wavBuffer.writeUInt16LE(1, 22);
+  wavBuffer.writeUInt32LE(sampleRate, 24);
+  wavBuffer.writeUInt32LE(sampleRate * 2, 28);
+  wavBuffer.writeUInt16LE(2, 32);
+  wavBuffer.writeUInt16LE(16, 34);
+  wavBuffer.write('data', 36);
+  wavBuffer.writeUInt32LE(numSamples * 2, 40);
+
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    wavBuffer.writeInt16LE(Math.round(val), 44 + i * 2);
+  }
+
+  const base64Wav = wavBuffer.toString('base64');
+  const filePath = FileSystem.cacheDirectory + 'recording_temp.wav';
+  await FileSystem.writeAsStringAsync(filePath, base64Wav, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return filePath;
 }
 
 async function requestMicPermission() {
@@ -173,7 +202,7 @@ export default function StandaloneASR() {
     try {
       LiveAudioStream.init({ sampleRate: 16000, channels: 1, bitsPerSample: 16, bufferSize: 2048 });
       LiveAudioStream.on('data', (data) => {
-        const chunk = base64ToUint8Array(data);
+        const chunk = base64ToUint8ArraySafe(data);
         pcmDataRef.current.push(chunk);
       });
       LiveAudioStream.start();
@@ -201,20 +230,25 @@ export default function StandaloneASR() {
         combined.set(chunk, offset);
         offset += chunk.length;
       }
+      
       const float32 = int16ToFloat32(combined);
-      // Whisper hallucinates on < 2 seconds of audio. Inject 1.5 seconds of pure silence.
+      
+      // Artificial silence padding to prevent hallucination!
       const SILENCE_SECONDS = 1.5;
       const silenceArray = new Float32Array(16000 * SILENCE_SECONDS);
       const paddedFloat32 = new Float32Array(float32.length + silenceArray.length);
       paddedFloat32.set(float32, 0);
       paddedFloat32.set(silenceArray, float32.length);
+
+      // Write to WAV file. This prevents React Native bridge memory corruption!
+      const wavPath = await saveWavFile(paddedFloat32, 16000);
       
       console.log('[ASR] Transcribing offline with Base model...');
       
-      // EXPLICITLY FORCE MARATHI LANGUAGE
-      const { promise } = whisperCtx.current.transcribeData(paddedFloat32.buffer, {
+      // Transcribe FILE instead of DATA
+      const { promise } = whisperCtx.current.transcribeFile(wavPath, {
         language: 'mr',
-        maxLen: 1, // Keep output extremely short for numbers
+        maxLen: 1,
         tokenTimestamps: false,
       });
 
@@ -244,7 +278,7 @@ export default function StandaloneASR() {
   });
 
   const statusText = !isReady
-    ? 'Loading offline AI model...'
+    ? 'Loading Base offline model...'
     : isTranscribing
       ? 'Transcribing locally...'
       : isListening
@@ -257,7 +291,7 @@ export default function StandaloneASR() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>AnkGuru ASR</Text>
-          <Text style={styles.headerSubtitle}>True Offline Marathi AI (Tiny)</Text>
+          <Text style={styles.headerSubtitle}>True Offline Marathi AI (Base)</Text>
         </View>
 
         <View style={styles.mathCard}>
