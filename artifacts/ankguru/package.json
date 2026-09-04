@@ -9,7 +9,8 @@
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "postinstall": "curl -L https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin -o assets/models/ggml-small.bin"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
